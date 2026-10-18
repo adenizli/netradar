@@ -5,7 +5,15 @@ import numpy as np
 
 from netradar.contracts import IqChunk, ModeSFrame
 from netradar.dsp.preamble import FRAME_SAMPLES, SAMPLE_RATE, detect_preambles
-from netradar.dsp.ppm import demodulate_frame
+from netradar.dsp.ppm import demodulate_df17_frames, demodulate_frame  # noqa: F401 (re-export)
+
+# (I-127.5)**2 + (Q-127.5)**2 in float32 for every little-endian (I, Q) byte pair.
+_CODES = np.arange(65536)
+_POWER_LUT = (
+    np.square((_CODES & 0xFF).astype(np.float32) - 127.5)
+    + np.square((_CODES >> 8).astype(np.float32) - 127.5)
+)
+del _CODES
 
 
 def detect_frames(chunks: Iterable[IqChunk], *, source: str = "rf",
@@ -38,16 +46,11 @@ def detect_frames(chunks: Iterable[IqChunk], *, source: str = "rf",
                     raise ValueError("IQ chunks overlap or rewind within one capture")
                 if chunk.start_sample_index != expected_start:
                     tail = np.empty(0, dtype=np.float32)
-            iq = np.frombuffer(chunk.data, dtype=np.uint8).reshape(-1, 2).astype(np.float32)
-            iq -= 127.5
-            current_power = np.square(iq).sum(axis=1)
+            current_power = _POWER_LUT[np.frombuffer(chunk.data, dtype="<u2")]
             power = np.concatenate((tail, current_power)) if tail.size else current_power
             buffer_start = chunk.start_sample_index - len(tail)
             expected_start = chunk.start_sample_index + chunk.sample_count
-            for start in detect_preambles(power):
-                raw = demodulate_frame(power, start)
-                if raw is None or raw[0] >> 3 != 17:
-                    continue
+            for start, raw in demodulate_df17_frames(power, detect_preambles(power)):
                 sample_index = buffer_start + start
                 observed = None if capture_start_unix_ms is None else (
                     capture_start_unix_ms + sample_index * 1000 // SAMPLE_RATE

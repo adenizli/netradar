@@ -31,26 +31,23 @@ def detect_preambles(power: np.ndarray) -> list[int]:
 
         end = min(base + BATCH_SIZE, max_start)
 
-        positions = np.arange(base, end)
+        # power[base + offset:end + offset] is a view, so nothing is copied;
+        # the sums run in the same order as the former stacked mean.
+        def at(offset):
+            return power[base + offset:end + offset]
 
-        # Expected pulse positions
-        pulse_values = np.stack([
-            power[positions + offset]
-            for offset in PULSE_POSITIONS
-        ])
-
-        # Expected quiet positions
-        quiet_values = np.stack([
-            power[positions + offset]
-            for offset in QUIET_POSITIONS
-        ])
-
-        # Average energy in pulse and quiet regions
-        pulse_mean = pulse_values.mean(axis=0)
-        quiet_mean = quiet_values.mean(axis=0)
-
-        # Weakest expected pulse
-        pulse_min = pulse_values.min(axis=0)
+        # Average energy in pulse and quiet regions (accumulated in place)
+        pulse_mean = at(PULSE_POSITIONS[0]).copy()
+        pulse_min = pulse_mean.copy()
+        for offset in PULSE_POSITIONS[1:]:
+            np.add(pulse_mean, at(offset), out=pulse_mean)
+            # Weakest expected pulse
+            np.minimum(pulse_min, at(offset), out=pulse_min)
+        quiet_mean = at(QUIET_POSITIONS[0]).copy()
+        for offset in QUIET_POSITIONS[1:]:
+            np.add(quiet_mean, at(offset), out=quiet_mean)
+        pulse_mean /= len(PULSE_POSITIONS)
+        quiet_mean /= len(QUIET_POSITIONS)
 
         # Local energy contrast
         score = pulse_mean / (quiet_mean + 1e-6)
@@ -61,11 +58,9 @@ def detect_preambles(power: np.ndarray) -> list[int]:
             & (pulse_min > 1.5 * quiet_mean)
         )
 
-        candidates = positions[valid]
-
         # Do not let an earlier false candidate suppress a nearby real frame.
         # Streaming overlap is handled by the 239-sample tail in detect_frames;
         # only the decoder decides whether a candidate has a valid CRC.
-        detections.extend(candidates.tolist())
+        detections.extend((np.flatnonzero(valid) + base).tolist())
 
     return detections
