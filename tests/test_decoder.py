@@ -4,7 +4,7 @@ from pathlib import Path
 import unittest
 
 from netradar.contracts import DecodedEvent, ModeSFrame
-from netradar.decoder.decode import ADSBDecoder, crc24, parse_header
+from netradar.decoder.decode import ADSBDecoder, cpr_nl, crc24, parse_header
 from tools.verify_fixtures import crc24 as reference_crc24
 
 
@@ -52,7 +52,7 @@ class CPRPairTest(unittest.TestCase):
         self.assertIsNone(first_event.fields["latitude"])
         self.assertIsNone(decoder.get_cpr_pair("40621D"))
         second_event = decoder.decode(odd)[0]
-        self.assertIsNone(second_event.fields["longitude"])
+        self.assertAlmostEqual(second_event.fields["longitude"], 3.9389125279, places=8)
         self.assertEqual(decoder.get_cpr_pair("40621D"), (even, odd))
 
     def test_odd_can_arrive_before_even(self):
@@ -159,6 +159,127 @@ class CPRPairTest(unittest.TestCase):
             with self.subTest(sample_rate=sample_rate):
                 with self.assertRaises(ValueError):
                     ADSBDecoder(sample_rate_hz=sample_rate)
+
+
+class CPRCoordinatesTest(unittest.TestCase):
+    EVEN = "8D40621D58C382D690C8AC2863A7"
+    ODD = "8D40621D58C386435CC412692AD6"
+
+    def decode_pair(self, even: ModeSFrame, odd: ModeSFrame) -> DecodedEvent:
+        decoder = ADSBDecoder()
+        decoder.decode(even)
+        return decoder.decode(odd)[0]
+
+    def test_published_example_selects_newer_frame(self):
+        # The 1090 MHz Riddle: even newer gives (52.257202, 3.919373).
+        cases = (
+            (75000, 10000, 52.2572021484375, 3.91937255859375, "even"),
+            (10000, 75000, 52.26578017412606, 3.938912527901786, "odd"),
+            (10000, 10000, 52.2572021484375, 3.91937255859375, "even"),
+        )
+        for even_index, odd_index, lat, lon, cpr_format in cases:
+            with self.subTest(even_index=even_index, odd_index=odd_index):
+                even = ModeSFrame(hex=self.EVEN, sample_index=even_index)
+                odd = ModeSFrame(hex=self.ODD, sample_index=odd_index)
+                event = self.decode_pair(even, odd)
+                self.assertAlmostEqual(event.fields["latitude"], lat, places=8)
+                self.assertAlmostEqual(event.fields["longitude"], lon, places=8)
+                self.assertEqual(event.fields["cpr_format"], cpr_format)
+                self.assertEqual(event.raw_frame, even.hex if cpr_format == "even" else odd.hex)
+
+    def test_second_published_pair_matches_pymodes_reference(self):
+        # pyModeS v2.21.1 tests/test_adsb.py, test_adsb_position.
+        even = ModeSFrame(hex="8D40058B58C901375147EFD09357", sample_index=0)
+        odd = ModeSFrame(hex="8D40058B58C904A87F402D3B8C59", sample_index=10_000_000)
+        event = self.decode_pair(even, odd)
+        self.assertEqual(event.icao, "40058B")
+        self.assertEqual(event.fields["altitude_ft"], 39000)
+        self.assertAlmostEqual(event.fields["latitude"], 49.81755, delta=0.00001)
+        self.assertAlmostEqual(event.fields["longitude"], 6.08442, delta=0.00001)
+
+    def test_southern_western_dateline_equator_and_polar_positions(self):
+        # Synthetic CPR fields independently encoded from stationary positions.
+        cases = (
+            (0, 0, (0, 0), (0, 0)),
+            (-33.9, -70.7, (45875, 49407), (58218, 75148)),
+            (0, 179.9, (0, 63388), (0, 128960)),
+            (0, -179.9, (0, 67684), (0, 2112)),
+            (88, 45, (87381, 16384), (55342, 16384)),
+            (-88, -45, (43691, 114688), (75730, 114688)),
+            (90, 45, (0, 16384), (98304, 16384)),
+            (-90, -45, (0, 114688), (32768, 114688)),
+        )
+        for lat, lon, even_cpr, odd_cpr in cases:
+            for newer_odd in (False, True):
+                with self.subTest(latitude=lat, longitude=lon, newer_odd=newer_odd):
+                    even = replace(make_position_frame(
+                        0xC38, cpr_lat=even_cpr[0], cpr_lon=even_cpr[1],
+                    ), sample_index=0 if newer_odd else 1)
+                    odd = replace(make_position_frame(
+                        0xC38, odd=1, cpr_lat=odd_cpr[0], cpr_lon=odd_cpr[1],
+                    ), sample_index=1 if newer_odd else 0)
+                    event = self.decode_pair(even, odd)
+                    self.assertAlmostEqual(event.fields["latitude"], lat, delta=0.0001)
+                    self.assertAlmostEqual(event.fields["longitude"], lon, delta=0.0001)
+
+    def test_different_nl_zones_keep_coordinates_unknown(self):
+        # Even is just below 10.4704713 degrees; odd is just above it.
+        even = make_position_frame(0xC38, cpr_lat=97657)
+        odd = replace(make_position_frame(0xC38, odd=1, cpr_lat=93850), sample_index=1)
+        event = self.decode_pair(even, odd)
+        self.assertIsNone(event.fields["latitude"])
+        self.assertIsNone(event.fields["longitude"])
+        self.assertEqual(event.fields["altitude_ft"], 38000)
+
+    def test_impossible_latitudes_keep_coordinates_unknown(self):
+        # This pair implies a latitude of 180 degrees, outside the poles.
+        even = make_position_frame(0xC38, cpr_lat=0)
+        odd = replace(make_position_frame(0xC38, odd=1, cpr_lat=65536), sample_index=1)
+        event = self.decode_pair(even, odd)
+        self.assertIsNone(event.fields["latitude"])
+        self.assertIsNone(event.fields["longitude"])
+
+    def test_expired_pair_does_not_emit_coordinates(self):
+        even = ModeSFrame(hex=self.EVEN, sample_index=0)
+        odd = ModeSFrame(hex=self.ODD, sample_index=20_000_001)
+        event = self.decode_pair(even, odd)
+        self.assertIsNone(event.fields["latitude"])
+        self.assertIsNone(event.fields["longitude"])
+
+    def test_late_counterpart_uses_newest_altitude_and_raw_message(self):
+        decoder = ADSBDecoder()
+        newest_odd = replace(make_position_frame(
+            0xC90, odd=1, cpr_lat=74158, cpr_lon=50194,
+        ), sample_index=75000)
+        decoder.decode(newest_odd)
+        older_even = ModeSFrame(hex=self.EVEN, sample_index=10000)
+        event = decoder.decode(older_even)[0]
+        self.assertEqual(event.raw_frame, newest_odd.hex)
+        self.assertEqual(event.fields["altitude_ft"], 39000)
+        self.assertEqual(event.fields["cpr_format"], "odd")
+        self.assertAlmostEqual(event.fields["latitude"], 52.2657801741, places=8)
+
+    def test_unknown_altitude_does_not_block_coordinates(self):
+        even = make_position_frame(0xC28, cpr_lat=93000, cpr_lon=51372)
+        odd = replace(make_position_frame(
+            0xC28, odd=1, cpr_lat=74158, cpr_lon=50194,
+        ), sample_index=1)
+        event = self.decode_pair(even, odd)
+        self.assertIsNone(event.fields["altitude_ft"])
+        self.assertAlmostEqual(event.fields["latitude"], 52.2657801741, places=8)
+
+    def test_nl_equator_boundaries_and_poles(self):
+        for lat, nl in ((0, 59), (10.47047129, 59), (10.47047131, 58),
+                        (41.085, 45), (52.257202, 36), (87, 2), (88, 1), (90, 1)):
+            for sign in (-1, 1):
+                with self.subTest(latitude=sign * lat):
+                    self.assertEqual(cpr_nl(sign * lat), nl)
+
+    def test_nl_rejects_nonphysical_input(self):
+        for latitude in (-91, 91, float("nan"), float("inf")):
+            with self.subTest(latitude=latitude):
+                with self.assertRaises(ValueError):
+                    cpr_nl(latitude)
 
 
 class HeaderTest(unittest.TestCase):
@@ -287,6 +408,8 @@ class AirbornePositionTest(unittest.TestCase):
         decoder = ADSBDecoder()
         for raw, icao, altitude, cpr_format, lat, lon in expected:
             with self.subTest(frame=raw):
+                # This test inspects individual frames, without a cached pair.
+                decoder.reset()
                 frame = ModeSFrame(hex=raw, sample_index=0)
                 self.assertEqual(decoder.decode(frame), [DecodedEvent(
                     icao=icao,

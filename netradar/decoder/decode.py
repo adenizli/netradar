@@ -1,5 +1,6 @@
 """Ahmet + Ahmet Eren: implement Mode S / ADS-B protocol processing."""
 from dataclasses import dataclass
+import math
 
 from netradar.contracts import ModeSFrame, DecodedEvent
 
@@ -78,7 +79,7 @@ def decode_altitude(alt_code: int) -> int | None:
     return 25 * n - 1000
 
 
-def decode_airborne_position(frame: ModeSFrame) -> dict[str, int | str | None]:
+def decode_airborne_position(frame: ModeSFrame) -> dict[str, int | float | str | None]:
     """Read TC 9-18 altitude and raw CPR; caller checks DF/TC/CRC."""
     binary = f"{int(frame.hex, 16):0112b}"
     alt_code = int(binary[40:52], 2)
@@ -92,6 +93,62 @@ def decode_airborne_position(frame: ModeSFrame) -> dict[str, int | str | None]:
         "latitude": None,
         "longitude": None,
     }
+
+
+def cpr_nl(latitude: float) -> int:
+    """Return the number of CPR longitude zones at a latitude in degrees."""
+    if not math.isfinite(latitude) or not -90 <= latitude <= 90:
+        raise ValueError("Latitude must be finite and between -90 and 90 degrees")
+    if abs(latitude) > 87:
+        return 1
+    if abs(latitude) == 87:
+        return 2
+
+    a = 1 - math.cos(math.pi / 30)  # NZ = 15 latitude zones per quadrant.
+    cosine = 1 - a / math.cos(math.radians(latitude)) ** 2
+    cosine = max(-1.0, min(1.0, cosine))
+    return min(59, math.floor(2 * math.pi / math.acos(cosine)))
+
+
+def decode_cpr_pair(even: ModeSFrame, odd: ModeSFrame) -> tuple[float, float] | None:
+    """Resolve a fresh, CRC-validated same-aircraft pair supplied by the cache.
+
+    Coordinates refer to the newer message; equal sample indices prefer even.
+    """
+    even_bits = f"{int(even.hex, 16):0112b}"
+    odd_bits = f"{int(odd.hex, 16):0112b}"
+    if even_bits[53] != "0" or odd_bits[53] != "1":
+        return None
+    if even.hex[2:8] != odd.hex[2:8]:
+        return None
+
+    ye = int(even_bits[54:71], 2) / 131072
+    yo = int(odd_bits[54:71], 2) / 131072
+    xe = int(even_bits[71:88], 2) / 131072
+    xo = int(odd_bits[71:88], 2) / 131072
+
+    j = math.floor(59 * ye - 60 * yo + 0.5)
+    lat_even = (360 / 60) * ((j % 60) + ye)
+    lat_odd = (360 / 59) * ((j % 59) + yo)
+    if lat_even >= 270:
+        lat_even -= 360
+    if lat_odd >= 270:
+        lat_odd -= 360
+    if not (-90 <= lat_even <= 90 and -90 <= lat_odd <= 90):
+        return None
+
+    nl = cpr_nl(lat_even)
+    if nl != cpr_nl(lat_odd):
+        return None
+
+    use_odd = odd.sample_index > even.sample_index
+    latitude = lat_odd if use_odd else lat_even
+    m = math.floor(xe * (nl - 1) - xo * nl + 0.5)
+    n = max(nl - int(use_odd), 1)
+    x = xo if use_odd else xe
+    longitude = (360 / n) * ((m % n) + x)
+    longitude = (longitude + 180) % 360 - 180
+    return latitude, longitude
 
 
 class ADSBDecoder:
@@ -140,7 +197,7 @@ class ADSBDecoder:
             messages[cpr_format] = frame
 
     def decode(self, frame: ModeSFrame) -> list[DecodedEvent]:
-        """Decode DF17 identification and raw barometric airborne position."""
+        """Decode DF17 identification and globally resolved airborne position."""
         header = parse_header(frame)
         if header.df != 17:
             return []
@@ -168,13 +225,23 @@ class ADSBDecoder:
             fields = decode_airborne_position(frame)
             cpr_format = "odd" if fields["cpr_format"] == "odd" else "even"
             self._remember_position(header.icao, frame, cpr_format)
+            position_frame = frame
+            pair = self.get_cpr_pair(header.icao)
+            if pair is not None:
+                coordinates = decode_cpr_pair(*pair)
+                if coordinates is not None:
+                    # Keep altitude, raw CPR and raw_frame tied to the same time
+                    # as the coordinates, even if an older message arrives late.
+                    position_frame = max(pair, key=lambda item: item.sample_index)
+                    fields = decode_airborne_position(position_frame)
+                    fields["latitude"], fields["longitude"] = coordinates
             return [DecodedEvent(
                 icao=header.icao,
                 event_type="airborne_position",
                 fields=fields,
-                raw_frame=frame.hex,
+                raw_frame=position_frame.hex,
                 observed_at_unix_ms=None,
             )]
 
-        # TODO: CPR coordinates, airborne velocity and GNSS height (TC 20-22).
+        # TODO: airborne velocity and GNSS height (TC 20-22).
         return []
