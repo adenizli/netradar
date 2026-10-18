@@ -39,6 +39,22 @@ def make_position_frame(
     return ModeSFrame(hex=raw.hex().upper(), sample_index=0, source="synthetic")
 
 
+def make_velocity_frame(
+    *, subtype: int = 1, east_code: int = 9, north_code: int = 160,
+    west: int = 0, south: int = 0,
+) -> ModeSFrame:
+    """Build a TC19 input with independently computed parity."""
+    payload = (
+        f"{19:05b}{subtype:03b}" + "11111"
+        + f"{west:01b}{east_code:010b}{south:01b}{north_code:010b}"
+        + "1" * 21  # Unrelated trailer bits must not enter the components.
+    )
+    raw = bytearray.fromhex("8D48502000000000000000000000")
+    raw[4:11] = int(payload, 2).to_bytes(7, "big")
+    raw[11:14] = reference_crc24(raw[:11]).to_bytes(3, "big")
+    return ModeSFrame(hex=raw.hex().upper(), sample_index=0, source="synthetic")
+
+
 class CPRPairTest(unittest.TestCase):
     EVEN = "8D40621D58C382D690C8AC2863A7"
     ODD = "8D40621D58C386435CC412692AD6"
@@ -387,14 +403,67 @@ class IdentificationTest(unittest.TestCase):
         frame = ModeSFrame(hex=raw.hex().upper(), sample_index=0)
         self.assertEqual(ADSBDecoder().decode(frame), [])
 
-    def test_velocity_message_is_skipped_for_now(self):
-        examples = json.loads((ROOT / "fixtures" / "frames.json").read_text())
-        for example in examples["frames"]:
-            if example["type_code"] != 19:
-                continue
-            with self.subTest(type_code=example["type_code"]):
-                frame = ModeSFrame(hex=example["hex"], sample_index=0)
+class VelocityComponentsTest(unittest.TestCase):
+    def test_published_velocity_components_and_event_contract(self):
+        frame = ModeSFrame(hex="8D485020994409940838175B284F", sample_index=220000)
+        self.assertEqual(ADSBDecoder().decode(frame), [DecodedEvent(
+            icao="485020",
+            event_type="airborne_velocity",
+            fields={
+                "subtype": 1,
+                "velocity_east_knots": -8,
+                "velocity_north_knots": -159,
+                "speed_knots": None,
+                "track_deg": None,
+                "vertical_rate_fpm": None,
+            },
+            raw_frame=frame.hex,
+            observed_at_unix_ms=None,
+        )])
+
+    def test_both_subtypes_and_all_direction_combinations(self):
+        for subtype, scale in ((1, 1), (2, 4)):
+            for west in (0, 1):
+                for south in (0, 1):
+                    with self.subTest(subtype=subtype, west=west, south=south):
+                        frame = make_velocity_frame(subtype=subtype, west=west, south=south)
+                        self.assertEqual(crc24(bytes.fromhex(frame.hex)), 0)
+                        fields = ADSBDecoder().decode(frame)[0].fields
+                        self.assertEqual(fields["subtype"], subtype)
+                        self.assertEqual(fields["velocity_east_knots"], (-8 if west else 8) * scale)
+                        self.assertEqual(fields["velocity_north_knots"], (-159 if south else 159) * scale)
+
+    def test_missing_components_are_distinct_from_zero_speed(self):
+        for east_code, north_code, expected_east, expected_north in (
+            (0, 160, None, -159), (9, 0, -8, None),
+            (0, 0, None, None), (1, 1, 0, 0),
+        ):
+            with self.subTest(east_code=east_code, north_code=north_code):
+                frame = make_velocity_frame(
+                    east_code=east_code, north_code=north_code, west=1, south=1,
+                )
+                fields = ADSBDecoder().decode(frame)[0].fields
+                self.assertEqual(fields["velocity_east_knots"], expected_east)
+                self.assertEqual(fields["velocity_north_knots"], expected_north)
+
+    def test_maximum_component_codes(self):
+        for subtype, expected in ((1, 1022), (2, 4088)):
+            with self.subTest(subtype=subtype):
+                frame = make_velocity_frame(subtype=subtype, east_code=1023, north_code=1023)
+                fields = ADSBDecoder().decode(frame)[0].fields
+                self.assertEqual(fields["velocity_east_knots"], expected)
+                self.assertEqual(fields["velocity_north_knots"], expected)
+
+    def test_airspeed_and_reserved_subtypes_are_skipped(self):
+        for subtype in (0, 3, 4, 5, 6, 7):
+            with self.subTest(subtype=subtype):
+                frame = make_velocity_frame(subtype=subtype)
+                self.assertEqual(crc24(bytes.fromhex(frame.hex)), 0)
                 self.assertEqual(ADSBDecoder().decode(frame), [])
+
+    def test_corrupted_velocity_is_rejected(self):
+        frame = ModeSFrame(hex="8D485020994409940838175B284E", sample_index=0)
+        self.assertEqual(ADSBDecoder().decode(frame), [])
 
 
 class AirbornePositionTest(unittest.TestCase):

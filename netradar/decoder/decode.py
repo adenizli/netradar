@@ -95,6 +95,35 @@ def decode_airborne_position(frame: ModeSFrame) -> dict[str, int | float | str |
     }
 
 
+def decode_velocity_components(frame: ModeSFrame) -> dict[str, int | None] | None:
+    """Read TC19 subtype 1/2 ground-velocity components; caller checks DF/TC/CRC."""
+    binary = f"{int(frame.hex, 16):0112b}"
+    subtype = int(binary[37:40], 2)
+    if subtype not in (1, 2):
+        return None
+
+    east_code = int(binary[46:56], 2)
+    north_code = int(binary[57:67], 2)
+    scale = 4 if subtype == 2 else 1
+
+    # Zero means unavailable; code 1 represents a real zero-knot component.
+    east = None if east_code == 0 else (east_code - 1) * scale
+    north = None if north_code == 0 else (north_code - 1) * scale
+    if east is not None and binary[45] == "1":
+        east = -east
+    if north is not None and binary[56] == "1":
+        north = -north
+
+    return {
+        "subtype": subtype,
+        "velocity_east_knots": east,
+        "velocity_north_knots": north,
+        "speed_knots": None,
+        "track_deg": None,
+        "vertical_rate_fpm": None,
+    }
+
+
 def cpr_nl(latitude: float) -> int:
     """Return the number of CPR longitude zones at a latitude in degrees."""
     if not math.isfinite(latitude) or not -90 <= latitude <= 90:
@@ -197,7 +226,7 @@ class ADSBDecoder:
             messages[cpr_format] = frame
 
     def decode(self, frame: ModeSFrame) -> list[DecodedEvent]:
-        """Decode DF17 identification and globally resolved airborne position."""
+        """Decode DF17 identification, airborne position and velocity components."""
         header = parse_header(frame)
         if header.df != 17:
             return []
@@ -243,5 +272,17 @@ class ADSBDecoder:
                 observed_at_unix_ms=None,
             )]
 
-        # TODO: airborne velocity and GNSS height (TC 20-22).
+        if header.type_code == 19:
+            fields = decode_velocity_components(frame)
+            if fields is None:
+                return []
+            return [DecodedEvent(
+                icao=header.icao,
+                event_type="airborne_velocity",
+                fields=fields,
+                raw_frame=frame.hex,
+                observed_at_unix_ms=None,
+            )]
+
+        # TODO: total speed, track, vertical rate, airspeed and GNSS height.
         return []
