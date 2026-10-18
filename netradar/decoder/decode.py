@@ -66,27 +66,51 @@ def decode_callsign(frame: ModeSFrame) -> str | None:
     return "".join(characters).rstrip() or None
 
 
+def _gray_to_int(gray: int) -> int:
+    value = 0
+    while gray:
+        value ^= gray
+        gray >>= 1
+    return value
+
+
 def decode_altitude(alt_code: int) -> int | None:
-    """Decode the 12-bit barometric Q=1 code in feet (TC 9-18 only).
-
-    Q=0 uses Gillham coding, which is not implemented yet.
-    """
-    if not (alt_code & 0x10):
+    """Decode a 12-bit AC field in feet, including Q=0 Gillham encoding."""
+    if alt_code == 0:
         return None
+    if alt_code & 0x10:
+        # Remove Q (the fifth bit from the right) to get the 11-bit integer N.
+        n = ((alt_code & 0xFE0) >> 1) | (alt_code & 0x0F)
+        return 25 * n - 1000
 
-    # Remove Q (the fifth bit from the right) to get the 11-bit integer N.
-    n = ((alt_code & 0xFE0) >> 1) | (alt_code & 0x0F)
-    return 25 * n - 1000
+    # AC12 order: C1 A1 C2 A2 C4 A4 B1 Q B2 D2 B4 D4.
+    bits = f"{alt_code:012b}"
+    gray500 = int("".join(bits[i] for i in (9, 11, 1, 3, 5, 6, 8, 10)), 2)
+    gray100 = int("".join(bits[i] for i in (0, 2, 4)), 2)
+    n500 = _gray_to_int(gray500)
+    n100 = _gray_to_int(gray100)
+    if n100 in (0, 5, 6):
+        return None
+    if n100 == 7:
+        n100 = 5
+    if n500 % 2:
+        n100 = 6 - n100
+    return 500 * n500 + 100 * n100 - 1300
 
 
 def decode_airborne_position(frame: ModeSFrame) -> dict[str, int | float | str | None]:
-    """Read TC 9-18 altitude and raw CPR; caller checks DF/TC/CRC."""
+    """Read TC 9-18/20-22 height and raw CPR; caller checks DF/TC/CRC."""
     binary = f"{int(frame.hex, 16):0112b}"
+    is_gnss = int(binary[32:37], 2) in (20, 21, 22)
     alt_code = int(binary[40:52], 2)
+    height_ft = decode_altitude(alt_code)
     is_odd = binary[53] == "1"
 
     return {
-        "altitude_ft": decode_altitude(alt_code),
+        # Keep geometric height separate from the existing barometric field.
+        "altitude_ft": None if is_gnss else height_ft,
+        "gnss_height_ft": height_ft if is_gnss else None,
+        "altitude_source": "gnss" if is_gnss else "barometric",
         "cpr_format": "odd" if is_odd else "even",
         "cpr_lat": int(binary[54:71], 2),
         "cpr_lon": int(binary[71:88], 2),
@@ -96,31 +120,42 @@ def decode_airborne_position(frame: ModeSFrame) -> dict[str, int | float | str |
 
 
 def decode_velocity_components(frame: ModeSFrame) -> dict[str, int | float | str | None] | None:
-    """Read TC19 subtype 1/2 ground/vertical velocity; caller checks DF/TC/CRC."""
+    """Read TC19 subtype 1-4 ground/air/vertical velocity; caller checks DF/TC/CRC."""
     binary = f"{int(frame.hex, 16):0112b}"
     subtype = int(binary[37:40], 2)
-    if subtype not in (1, 2):
+    if subtype not in (1, 2, 3, 4):
         return None
 
-    east_code = int(binary[46:56], 2)
-    north_code = int(binary[57:67], 2)
-    scale = 4 if subtype == 2 else 1
-
-    # Zero means unavailable; code 1 represents a real zero-knot component.
-    east = None if east_code == 0 else (east_code - 1) * scale
-    north = None if north_code == 0 else (north_code - 1) * scale
-    if east is not None and binary[45] == "1":
-        east = -east
-    if north is not None and binary[56] == "1":
-        north = -north
-
+    east = None
+    north = None
     speed = None
     track = None
-    if east is not None and north is not None:
-        speed = math.hypot(east, north)
-        if speed > 0:
-            # atan2(east, north) gives clockwise bearing from north.
-            track = math.degrees(math.atan2(east, north)) % 360
+    airspeed = None
+    airspeed_type = None
+    heading = None
+    scale = 4 if subtype in (2, 4) else 1
+    if subtype in (1, 2):
+        east_code = int(binary[46:56], 2)
+        north_code = int(binary[57:67], 2)
+        # Zero means unavailable; code 1 represents a real zero-knot component.
+        east = None if east_code == 0 else (east_code - 1) * scale
+        north = None if north_code == 0 else (north_code - 1) * scale
+        if east is not None and binary[45] == "1":
+            east = -east
+        if north is not None and binary[56] == "1":
+            north = -north
+        if east is not None and north is not None:
+            speed = math.hypot(east, north)
+            if speed > 0:
+                # atan2(east, north) gives clockwise bearing from north.
+                track = math.degrees(math.atan2(east, north)) % 360
+    else:
+        # The same bit positions mean heading and airspeed in subtype 3/4.
+        if binary[45] == "1":
+            heading = int(binary[46:56], 2) * 360 / 1024
+        airspeed_code = int(binary[57:67], 2)
+        airspeed = None if airspeed_code == 0 else (airspeed_code - 1) * scale
+        airspeed_type = "tas" if binary[56] == "1" else "ias"
 
     vertical_code = int(binary[69:78], 2)
     vertical_rate = None if vertical_code == 0 else (vertical_code - 1) * 64
@@ -134,6 +169,10 @@ def decode_velocity_components(frame: ModeSFrame) -> dict[str, int | float | str
         "velocity_north_knots": north,
         "speed_knots": speed,
         "track_deg": track,
+        "airspeed_knots": airspeed,
+        "airspeed_type": airspeed_type,
+        "heading_deg": heading,
+        "heading_reference": "magnetic" if subtype in (3, 4) else None,
         "vertical_rate_fpm": vertical_rate,
         "vertical_rate_source": vertical_source,
     }
@@ -164,6 +203,10 @@ def decode_cpr_pair(even: ModeSFrame, odd: ModeSFrame) -> tuple[float, float] | 
     if even_bits[53] != "0" or odd_bits[53] != "1":
         return None
     if even.hex[2:8] != odd.hex[2:8]:
+        return None
+    even_gnss = int(even_bits[32:37], 2) in (20, 21, 22)
+    odd_gnss = int(odd_bits[32:37], 2) in (20, 21, 22)
+    if even_gnss != odd_gnss:
         return None
 
     ye = int(even_bits[54:71], 2) / 131072
@@ -202,18 +245,21 @@ class ADSBDecoder:
         if sample_rate_hz <= 0:
             raise ValueError("Sample rate must be positive")
 
+        self._sample_rate_hz = sample_rate_hz
         self._max_pair_samples = 10 * sample_rate_hz
         self._latest_sample_index = 0
-        self._cpr_frames: dict[str, dict[str, ModeSFrame]] = {}
+        self._cpr_frames: dict[tuple[str, str], dict[str, ModeSFrame]] = {}
 
     def reset(self) -> None:
         """Start a new capture without carrying over old CPR messages."""
         self._cpr_frames.clear()
         self._latest_sample_index = 0
 
-    def get_cpr_pair(self, icao: str) -> tuple[ModeSFrame, ModeSFrame] | None:
-        """Return (even, odd) if both are fresh, or None if no pair is ready."""
-        messages = self._cpr_frames.get(icao, {})
+    def get_cpr_pair(
+        self, icao: str, *, altitude_source: str = "barometric",
+    ) -> tuple[ModeSFrame, ModeSFrame] | None:
+        """Return fresh (even, odd) for one ICAO and height source, or None."""
+        messages = self._cpr_frames.get((icao, altitude_source), {})
         even = messages.get("even")
         odd = messages.get("odd")
         if even is None or odd is None:
@@ -224,21 +270,41 @@ class ADSBDecoder:
 
     def _expire_cpr_frames(self) -> None:
         # The clock is capture time, measured by the latest valid DF17 frame.
-        for icao, messages in list(self._cpr_frames.items()):
+        for key, messages in list(self._cpr_frames.items()):
             for cpr_format, frame in list(messages.items()):
                 if self._latest_sample_index - frame.sample_index > self._max_pair_samples:
                     del messages[cpr_format]
             if not messages:
-                del self._cpr_frames[icao]
+                del self._cpr_frames[key]
 
-    def _remember_position(self, icao: str, frame: ModeSFrame, cpr_format: str) -> None:
+    def _remember_position(
+        self, icao: str, frame: ModeSFrame, cpr_format: str, altitude_source: str,
+    ) -> None:
         if self._latest_sample_index - frame.sample_index > self._max_pair_samples:
             return
 
-        messages = self._cpr_frames.setdefault(icao, {})
+        messages = self._cpr_frames.setdefault((icao, altitude_source), {})
         previous = messages.get(cpr_format)
         if previous is None or frame.sample_index >= previous.sample_index:
             messages[cpr_format] = frame
+
+    def _event(self, frame: ModeSFrame, event_type: str, fields: dict) -> DecodedEvent:
+        header = parse_header(frame)
+        return DecodedEvent(
+            icao=header.icao,
+            event_type=event_type,
+            fields=fields,
+            raw_frame=frame.hex,
+            observed_at_unix_ms=None,
+            metadata={
+                "df": header.df,
+                "type_code": header.type_code,
+                "crc_valid": True,
+                "source": frame.source,
+                "sample_index": frame.sample_index,
+                "sample_rate_hz": self._sample_rate_hz,
+            },
+        )
 
     def decode(self, frame: ModeSFrame) -> list[DecodedEvent]:
         """Decode DF17 identification, airborne position and velocity components."""
@@ -257,20 +323,15 @@ class ADSBDecoder:
             if callsign is None:
                 return []
 
-            return [DecodedEvent(
-                icao=header.icao,
-                event_type="identification",
-                fields={"callsign": callsign},
-                raw_frame=frame.hex,
-                observed_at_unix_ms=None,
-            )]
+            return [self._event(frame, "identification", {"callsign": callsign})]
 
-        if header.type_code in range(9, 19):
+        if header.type_code in range(9, 19) or header.type_code in (20, 21, 22):
             fields = decode_airborne_position(frame)
             cpr_format = "odd" if fields["cpr_format"] == "odd" else "even"
-            self._remember_position(header.icao, frame, cpr_format)
+            altitude_source = "gnss" if header.type_code in (20, 21, 22) else "barometric"
+            self._remember_position(header.icao, frame, cpr_format, altitude_source)
             position_frame = frame
-            pair = self.get_cpr_pair(header.icao)
+            pair = self.get_cpr_pair(header.icao, altitude_source=altitude_source)
             if pair is not None:
                 coordinates = decode_cpr_pair(*pair)
                 if coordinates is not None:
@@ -279,25 +340,12 @@ class ADSBDecoder:
                     position_frame = max(pair, key=lambda item: item.sample_index)
                     fields = decode_airborne_position(position_frame)
                     fields["latitude"], fields["longitude"] = coordinates
-            return [DecodedEvent(
-                icao=header.icao,
-                event_type="airborne_position",
-                fields=fields,
-                raw_frame=position_frame.hex,
-                observed_at_unix_ms=None,
-            )]
+            return [self._event(position_frame, "airborne_position", fields)]
 
         if header.type_code == 19:
             fields = decode_velocity_components(frame)
             if fields is None:
                 return []
-            return [DecodedEvent(
-                icao=header.icao,
-                event_type="airborne_velocity",
-                fields=fields,
-                raw_frame=frame.hex,
-                observed_at_unix_ms=None,
-            )]
+            return [self._event(frame, "airborne_velocity", fields)]
 
-        # TODO: airspeed/heading (TC19 subtype 3/4) and GNSS height (TC20-22).
         return []

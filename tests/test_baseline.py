@@ -36,6 +36,10 @@ class BaselineTest(unittest.TestCase):
             self.assertEqual(event['type'],'aircraft_update')
             self.assertIn('icao',event['data'])
             self.assertIn('latitude',event['data'])
+            self.assertEqual(event['schema_version'],'1.1')
+            self.assertIsNone(event['event'])  # Fictional UI demo, no RF provenance.
+            self.assertIsNotNone(event['data']['track_deg'])
+            self.assertIsNone(event['data']['heading_deg'])
 
 
 if __name__=='__main__':

@@ -1,5 +1,7 @@
-"""Small, dependency-free cross-team data contracts. Version 1 is frozen for sprint."""
-from dataclasses import dataclass, field
+"""Dependency-free cross-team contracts with lossless v1.1 JSON event delivery."""
+from copy import deepcopy
+from dataclasses import asdict, dataclass, field
+import json
 from typing import Optional, Any
 
 
@@ -45,8 +47,11 @@ class DecodedEvent:
     fields: dict[str, Any] = field(default_factory=dict)
     raw_frame: Optional[str] = None
     observed_at_unix_ms: Optional[int] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
+        if not isinstance(self.fields, dict) or not isinstance(self.metadata, dict):
+            raise ValueError("Event fields and metadata must be objects")
         if len(self.icao) != 6 or self.icao != self.icao.upper():
             raise ValueError("ICAO should be 6 uppercase hex characters")
         try:
@@ -55,3 +60,26 @@ class DecodedEvent:
             raise ValueError("ICAO must be hex") from exc
         if self.event_type not in {"identification", "airborne_position", "airborne_velocity"}:
             raise ValueError("Unexpected event type")
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return all fields, including future payload extensions, as a copy."""
+        return {"schema_version": "1.1", **asdict(self)}
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False, allow_nan=False)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "DecodedEvent":
+        if not isinstance(payload, dict):
+            raise ValueError("Decoded event must be a JSON object")
+        data = deepcopy(payload)
+        version = data.pop("schema_version", "1.0")
+        if version not in ("1.0", "1.1"):
+            raise ValueError(f"Unsupported decoded event schema: {version}")
+        # Reject values that cannot cross the JSON boundary without invalid numbers.
+        json.dumps(data, allow_nan=False)
+        return cls(**data)
+
+    @classmethod
+    def from_json(cls, payload: str) -> "DecodedEvent":
+        return cls.from_dict(json.loads(payload))

@@ -5,6 +5,39 @@ This kit provides **contracts, real example DF17 frames, deterministic synthetic
 mock backend events, and tests**. It does NOT contain a complete decoder or a real RF recording.
 Each teammate must implement their own module and demonstrate it against shared fixtures.
 
+The decoder implementation now covers DF17 identification, airborne position
+(barometric and GNSS height), and velocity subtypes 1-4. See
+[decoder coverage and field meanings](docs/DECODER.md) for supported encodings,
+integration details and remaining scope. Other pipeline modules are still starter
+interfaces, except the aircraft state/delivery adapter described below.
+
+## Decoder to backend delivery
+
+Every decoder event is now delivered to `AircraftStore` by `DecoderPipeline`.
+Updates retain all decoded fields, raw hex and capture metadata; ground/air speed
+and barometric/GNSS height remain separate. See [contracts v1.1](docs/CONTRACTS.md).
+
+Run a decoder/backend demo using the known frames and offsets in the synthetic
+fixture metadata (this bypasses IQ acquisition and detection):
+
+```bash
+python3 -m netradar.pipeline --fixture fixtures/synthetic_adsb_2msps.json
+```
+
+Each stdout line is a complete `aircraft_update` JSON object suitable for piping
+to another process. For real/replayed DSP frames, pass a JSONL file or pipe stdin:
+
+```bash
+python3 -m netradar.pipeline --input frames.jsonl --sample-rate-hz 2000000
+```
+
+Each input line must contain `hex`, `sample_index`, and optionally `source` from
+`ModeSFrame`. Keep one capture per invocation. In Python, use
+`DecoderPipeline(publish=callback).handle_frame(frame)`; a separate backend process
+can receive `event.to_json()` via `AircraftStore.apply_json()`. The optional callback
+receives every full update. HTTP/WebSocket hosting and live SDR acquisition are
+not started by this adapter.
+
 ## 0. Quick start (Mac, Linux, Raspberry Pi; Python 3.10+)
 
 ```bash

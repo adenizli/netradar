@@ -278,9 +278,9 @@ class CPRCoordinatesTest(unittest.TestCase):
         self.assertAlmostEqual(event.fields["latitude"], 52.2657801741, places=8)
 
     def test_unknown_altitude_does_not_block_coordinates(self):
-        even = make_position_frame(0xC28, cpr_lat=93000, cpr_lon=51372)
+        even = make_position_frame(0x000, cpr_lat=93000, cpr_lon=51372)
         odd = replace(make_position_frame(
-            0xC28, odd=1, cpr_lat=74158, cpr_lon=50194,
+            0x000, odd=1, cpr_lat=74158, cpr_lon=50194,
         ), sample_index=1)
         event = self.decode_pair(even, odd)
         self.assertIsNone(event.fields["altitude_ft"])
@@ -374,6 +374,10 @@ class IdentificationTest(unittest.TestCase):
                     fields={"callsign": example["expected_callsign"]},
                     raw_frame=example["hex"],
                     observed_at_unix_ms=None,
+                    metadata={
+                        "df": 17, "type_code": example["type_code"], "crc_valid": True,
+                        "source": "rf", "sample_index": 0, "sample_rate_hz": 2_000_000,
+                    },
                 )])
 
     def test_all_identification_types_and_character_ranges(self):
@@ -456,8 +460,8 @@ class VelocityComponentsTest(unittest.TestCase):
                 self.assertEqual(fields["velocity_east_knots"], expected)
                 self.assertEqual(fields["velocity_north_knots"], expected)
 
-    def test_airspeed_and_reserved_subtypes_are_skipped(self):
-        for subtype in (0, 3, 4, 5, 6, 7):
+    def test_reserved_subtypes_are_skipped(self):
+        for subtype in (0, 5, 6, 7):
             with self.subTest(subtype=subtype):
                 frame = make_velocity_frame(subtype=subtype)
                 self.assertEqual(crc24(bytes.fromhex(frame.hex)), 0)
@@ -583,6 +587,8 @@ class AirbornePositionTest(unittest.TestCase):
                     event_type="airborne_position",
                     fields={
                         "altitude_ft": altitude,
+                        "gnss_height_ft": None,
+                        "altitude_source": "barometric",
                         "cpr_format": cpr_format,
                         "cpr_lat": lat,
                         "cpr_lon": lon,
@@ -591,6 +597,10 @@ class AirbornePositionTest(unittest.TestCase):
                     },
                     raw_frame=raw,
                     observed_at_unix_ms=None,
+                    metadata={
+                        "df": 17, "type_code": 11, "crc_valid": True,
+                        "source": "rf", "sample_index": 0, "sample_rate_hz": 2_000_000,
+                    },
                 )])
 
     def test_barometric_type_range_and_cpr_boundaries(self):
@@ -618,7 +628,7 @@ class AirbornePositionTest(unittest.TestCase):
                 self.assertEqual(fields["altitude_ft"], altitude)
 
     def test_q_zero_keeps_cpr_but_reports_unknown_altitude(self):
-        for alt_code in (0x000, 0xC28):
+        for alt_code in (0x000, 0x001):
             with self.subTest(alt_code=alt_code):
                 frame = make_position_frame(alt_code, cpr_lat=93000, cpr_lon=51372)
                 fields = ADSBDecoder().decode(frame)[0].fields
@@ -631,7 +641,10 @@ class AirbornePositionTest(unittest.TestCase):
             with self.subTest(type_code=type_code):
                 frame = make_position_frame(0xC38, type_code=type_code)
                 self.assertEqual(crc24(bytes.fromhex(frame.hex)), 0)
-                self.assertEqual(ADSBDecoder().decode(frame), [])
+                fields = ADSBDecoder().decode(frame)[0].fields
+                self.assertIsNone(fields["altitude_ft"])
+                self.assertEqual(fields["gnss_height_ft"], 38000)
+                self.assertEqual(fields["altitude_source"], "gnss")
 
 
 if __name__ == "__main__":

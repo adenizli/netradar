@@ -1,4 +1,10 @@
-# Contracts v1 -- FROZEN FOR SPRINT
+# Contracts v1.1 -- Complete decoder event delivery
+
+Version 1.1 adds optional event metadata, JSON serialization and lossless backend
+updates. Existing v1 decoder events without `schema_version` or `metadata` are
+accepted by `DecodedEvent.from_dict()` / `from_json()`. Existing dataclass
+constructor arguments remain valid. Consumers must distinguish the measurement
+types documented below rather than treating every speed or direction alike.
 
 ## General
 
@@ -53,10 +59,13 @@ Initial scope: **112-bit DF17**. Other frames are out of MVP scope.
 
 ```json
 {
+  "schema_version": "1.1",
   "icao": "40621D",
   "event_type": "airborne_position",
   "fields": {
     "altitude_ft": 38000,
+    "gnss_height_ft": null,
+    "altitude_source": "barometric",
     "cpr_format": "even",
     "cpr_lat": 93000,
     "cpr_lon": 51372,
@@ -64,40 +73,90 @@ Initial scope: **112-bit DF17**. Other frames are out of MVP scope.
     "longitude": null
   },
   "raw_frame": "8D40621D58C382D690C8AC2863A7",
-  "observed_at_unix_ms": null
-}
-```
-
-This is an **illustration of shape**; numbers in this example are NOT an asserted
-validated decoding of that frame. The decoder should emit actual values from parsing.
-
-`event_type`: `identification`, `airborne_position`, or `airborne_velocity` in MVP.
-The decoder keeps the short-lived even/odd CPR pair context per ICAO. Backend keeps
-**application aircraft state** across events and removes stale aircraft.
-
-## D. Backend -> Frontend
-
-On connection, frontend requests `GET /api/aircraft` for a snapshot (JSON array).
-Then it opens `WS /ws/aircraft` for incremental updates:
-
-```json
-{
-  "type": "aircraft_update",
-  "data": {
-    "icao": "4CA123",
-    "callsign": "DEMO123",
-    "latitude": 41.1,
-    "longitude": 29.06,
-    "altitude_ft": 35000,
-    "speed_knots": 440,
-    "heading_deg": 210,
-    "last_seen": "2026-10-18T12:00:00Z"
+  "observed_at_unix_ms": null,
+  "metadata": {
+    "df": 17,
+    "type_code": 11,
+    "crc_valid": true,
+    "source": "synthetic",
+    "sample_index": 10000,
+    "sample_rate_hz": 2000000
   }
 }
 ```
 
-Demo data is NOT live ADS-B. On real feeds, unknown values are null.
-Ensure reconnect/resubscribe uses a fresh snapshot, so missed updates are recovered.
+This example is the first synthetic fixture message before an even/odd pair is
+available. All values come from the corresponding decoder output.
+
+`fields` and `metadata` are extensible JSON objects. Serialization must preserve
+every key and nested value, including unknown future fields, zeros, `false` and
+`null`. Never rebuild a decoder event from a whitelist of UI fields.
+
+Use `event.to_dict()` or `event.to_json()` for transport and
+`DecodedEvent.from_dict()` or `DecodedEvent.from_json()` on receipt. The JSON
+boundary rejects non-finite numbers. Unknown schema versions are rejected rather
+than silently reinterpreted. `raw_frame` remains the complete 112-bit message.
+
+`metadata` carries DF, Type Code, CRC result, source label, sample index and actual
+sample rate. It refers to the same frame as `raw_frame` and its measurements. For
+a resolved CPR pair that is the newer message, even if its counterpart arrived
+late. Capture-relative sample indices do not create an absolute observation time.
+
+Position events carry both `altitude_ft` (barometric) and `gnss_height_ft`
+(geometric), with the inapplicable one set to null. Velocity events distinguish
+`speed_knots`/`track_deg` (ground speed/true track) from
+`airspeed_knots`/`airspeed_type` and `heading_deg`/`heading_reference` (IAS/TAS and
+magnetic heading). They also include signed velocity components, subtype,
+`vertical_rate_fpm` and `vertical_rate_source`. Raw CPR values are retained.
+See [the complete decoder field definitions](DECODER.md).
+
+`event_type`: `identification`, `airborne_position`, or `airborne_velocity` in MVP.
+The decoder keeps the short-lived even/odd CPR pair context per ICAO and height
+source. Backend keeps application aircraft state across events. Expiring stale
+aircraft is a separate backend lifecycle concern, not implemented by this delivery
+adapter.
+
+## D. Backend -> Frontend
+
+`AircraftStore.apply(event)` and `apply_json(event_json)` return this envelope:
+
+```python
+{
+  "schema_version": "1.1",
+  "type": "aircraft_update",
+  "data": aircraft_state,
+  "event": complete_decoded_event
+}
+```
+
+The variable names above stand for objects, not string literals:
+
+- `event`: the full versioned decoder event from section C, with every payload and
+  metadata field. Every accepted event is delivered, even if the aircraft state
+  already contains the same measurement.
+- `data`: the complete current aircraft state, with flat measurement fields for UI
+  convenience. Known measurements survive unrelated events with null fields.
+  Real zero values update the state. A zero speed clears its undefined track.
+  Related value/source pairs (airspeed/type, heading/reference, vertical rate/source)
+  update together. Latitude and longitude update as a pair.
+- `data.latest_events`: full latest-received events, retained separately under
+  `identification`, `airborne_position:barometric`, `airborne_position:gnss`,
+  `airborne_velocity:ground` and `airborne_velocity:air`. This also preserves
+  fields not flattened into the UI state. It is not an unlimited event history.
+- `data.position_source`: source of the most recently resolved coordinate pair.
+- `data.last_seen` / `last_seen_unix_ms`: measured observation time, ISO UTC and
+  Unix milliseconds. Both remain null for timestamp-free replay. Receipt time is
+  not substituted for observation time.
+
+`AircraftStore.snapshot()` returns copied aircraft objects with these complete
+retained events. A subscriber can persist every update's `event` for a full history.
+The `DecoderPipeline` delivers events to this store and an optional publisher
+callback. Its CLI emits the entire envelope as one JSON object per line. No HTTP
+or WebSocket server is started by this module.
+
+The planned HTTP adapter should expose `snapshot()` as `GET /api/aircraft` and
+publish these same envelopes on `WS /ws/aircraft`. Reconnect should fetch a fresh
+snapshot. Demo fixture updates are fictional UI data and have `event: null`.
 
 ## E. One Pi vs. multiple computers
 
