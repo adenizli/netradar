@@ -23,6 +23,21 @@ def make_identification_frame(codes: list[int], type_code: int = 4) -> ModeSFram
     return ModeSFrame(hex=raw.hex().upper(), sample_index=10000, source="synthetic")
 
 
+def make_position_frame(
+    alt_code: int, *, type_code: int = 11, odd: int = 0,
+    cpr_lat: int = 0, cpr_lon: int = 0,
+) -> ModeSFrame:
+    """Build a position test input; include nonzero status and time flags."""
+    payload = (
+        f"{type_code:05b}" + "111" + f"{alt_code:012b}"
+        + "1" + str(odd) + f"{cpr_lat:017b}" + f"{cpr_lon:017b}"
+    )
+    raw = bytearray.fromhex("8D40621D00000000000000000000")
+    raw[4:11] = int(payload, 2).to_bytes(7, "big")
+    raw[11:14] = reference_crc24(raw[:11]).to_bytes(3, "big")
+    return ModeSFrame(hex=raw.hex().upper(), sample_index=0, source="synthetic")
+
+
 class HeaderTest(unittest.TestCase):
     def test_published_example_headers(self):
         examples = json.loads((ROOT / "fixtures" / "frames.json").read_text())
@@ -128,13 +143,81 @@ class IdentificationTest(unittest.TestCase):
         frame = ModeSFrame(hex=raw.hex().upper(), sample_index=0)
         self.assertEqual(ADSBDecoder().decode(frame), [])
 
-    def test_other_valid_message_types_are_skipped_for_now(self):
+    def test_velocity_message_is_skipped_for_now(self):
         examples = json.loads((ROOT / "fixtures" / "frames.json").read_text())
         for example in examples["frames"]:
-            if example["type_code"] in (1, 2, 3, 4):
+            if example["type_code"] != 19:
                 continue
             with self.subTest(type_code=example["type_code"]):
                 frame = ModeSFrame(hex=example["hex"], sample_index=0)
+                self.assertEqual(ADSBDecoder().decode(frame), [])
+
+
+class AirbornePositionTest(unittest.TestCase):
+    def test_published_position_fields_and_event_contract(self):
+        expected = (
+            ("8D40621D58C382D690C8AC2863A7", "40621D", 38000, "even", 93000, 51372),
+            ("8D40621D58C386435CC412692AD6", "40621D", 38000, "odd", 74158, 50194),
+            ("8D40058B58C901375147EFD09357", "40058B", 39000, "even", 39848, 83951),
+            ("8D40058B58C904A87F402D3B8C59", "40058B", 39000, "odd", 21567, 81965),
+        )
+        decoder = ADSBDecoder()
+        for raw, icao, altitude, cpr_format, lat, lon in expected:
+            with self.subTest(frame=raw):
+                frame = ModeSFrame(hex=raw, sample_index=0)
+                self.assertEqual(decoder.decode(frame), [DecodedEvent(
+                    icao=icao,
+                    event_type="airborne_position",
+                    fields={
+                        "altitude_ft": altitude,
+                        "cpr_format": cpr_format,
+                        "cpr_lat": lat,
+                        "cpr_lon": lon,
+                        "latitude": None,
+                        "longitude": None,
+                    },
+                    raw_frame=raw,
+                    observed_at_unix_ms=None,
+                )])
+
+    def test_barometric_type_range_and_cpr_boundaries(self):
+        for type_code in range(9, 19):
+            for odd in (0, 1):
+                with self.subTest(type_code=type_code, odd=odd):
+                    frame = make_position_frame(
+                        0xC38, type_code=type_code, odd=odd,
+                        cpr_lat=0, cpr_lon=131071,
+                    )
+                    self.assertEqual(crc24(bytes.fromhex(frame.hex)), 0)
+                    fields = ADSBDecoder().decode(frame)[0].fields
+                    self.assertEqual(fields["altitude_ft"], 38000)
+                    self.assertEqual(fields["cpr_format"], "odd" if odd else "even")
+                    self.assertEqual(fields["cpr_lat"], 0)
+                    self.assertEqual(fields["cpr_lon"], 131071)
+                    self.assertIsNone(fields["latitude"])
+                    self.assertIsNone(fields["longitude"])
+
+    def test_q_one_altitude_boundaries(self):
+        for alt_code, altitude in ((0x010, -1000), (0x058, 0), (0xFFF, 50175)):
+            with self.subTest(alt_code=alt_code):
+                frame = make_position_frame(alt_code)
+                fields = ADSBDecoder().decode(frame)[0].fields
+                self.assertEqual(fields["altitude_ft"], altitude)
+
+    def test_q_zero_keeps_cpr_but_reports_unknown_altitude(self):
+        for alt_code in (0x000, 0xC28):
+            with self.subTest(alt_code=alt_code):
+                frame = make_position_frame(alt_code, cpr_lat=93000, cpr_lon=51372)
+                fields = ADSBDecoder().decode(frame)[0].fields
+                self.assertIsNone(fields["altitude_ft"])
+                self.assertEqual(fields["cpr_lat"], 93000)
+                self.assertEqual(fields["cpr_lon"], 51372)
+
+    def test_gnss_height_types_are_not_decoded_as_barometric(self):
+        for type_code in (20, 21, 22):
+            with self.subTest(type_code=type_code):
+                frame = make_position_frame(0xC38, type_code=type_code)
+                self.assertEqual(crc24(bytes.fromhex(frame.hex)), 0)
                 self.assertEqual(ADSBDecoder().decode(frame), [])
 
 

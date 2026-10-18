@@ -65,9 +65,38 @@ def decode_callsign(frame: ModeSFrame) -> str | None:
     return "".join(characters).rstrip() or None
 
 
+def decode_altitude(alt_code: int) -> int | None:
+    """Decode the 12-bit barometric Q=1 code in feet (TC 9-18 only).
+
+    Q=0 uses Gillham coding, which is not implemented yet.
+    """
+    if not (alt_code & 0x10):
+        return None
+
+    # Remove Q (the fifth bit from the right) to get the 11-bit integer N.
+    n = ((alt_code & 0xFE0) >> 1) | (alt_code & 0x0F)
+    return 25 * n - 1000
+
+
+def decode_airborne_position(frame: ModeSFrame) -> dict[str, int | str | None]:
+    """Read TC 9-18 altitude and raw CPR; caller checks DF/TC/CRC."""
+    binary = f"{int(frame.hex, 16):0112b}"
+    alt_code = int(binary[40:52], 2)
+    is_odd = binary[53] == "1"
+
+    return {
+        "altitude_ft": decode_altitude(alt_code),
+        "cpr_format": "odd" if is_odd else "even",
+        "cpr_lat": int(binary[54:71], 2),
+        "cpr_lon": int(binary[71:88], 2),
+        "latitude": None,
+        "longitude": None,
+    }
+
+
 class ADSBDecoder:
     def decode(self, frame: ModeSFrame) -> list[DecodedEvent]:
-        """Decode CRC-valid DF17 identification; other message types are skipped."""
+        """Decode DF17 identification and raw barometric airborne position."""
         header = parse_header(frame)
         if header.df != 17:
             return []
@@ -88,5 +117,14 @@ class ADSBDecoder:
                 observed_at_unix_ms=None,
             )]
 
-        # TODO: airborne position, CPR pair state and airborne velocity.
+        if header.type_code in range(9, 19):
+            return [DecodedEvent(
+                icao=header.icao,
+                event_type="airborne_position",
+                fields=decode_airborne_position(frame),
+                raw_frame=frame.hex,
+                observed_at_unix_ms=None,
+            )]
+
+        # TODO: CPR pair state, airborne velocity and GNSS height (TC 20-22).
         return []
