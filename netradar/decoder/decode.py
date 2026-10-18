@@ -95,6 +95,50 @@ def decode_airborne_position(frame: ModeSFrame) -> dict[str, int | str | None]:
 
 
 class ADSBDecoder:
+    """Decode one capture at a fixed sample rate; reset before a new capture."""
+
+    def __init__(self, *, sample_rate_hz: int = 2_000_000):
+        if sample_rate_hz <= 0:
+            raise ValueError("Sample rate must be positive")
+
+        self._max_pair_samples = 10 * sample_rate_hz
+        self._latest_sample_index = 0
+        self._cpr_frames: dict[str, dict[str, ModeSFrame]] = {}
+
+    def reset(self) -> None:
+        """Start a new capture without carrying over old CPR messages."""
+        self._cpr_frames.clear()
+        self._latest_sample_index = 0
+
+    def get_cpr_pair(self, icao: str) -> tuple[ModeSFrame, ModeSFrame] | None:
+        """Return (even, odd) if both are fresh, or None if no pair is ready."""
+        messages = self._cpr_frames.get(icao, {})
+        even = messages.get("even")
+        odd = messages.get("odd")
+        if even is None or odd is None:
+            return None
+        if abs(even.sample_index - odd.sample_index) > self._max_pair_samples:
+            return None
+        return even, odd
+
+    def _expire_cpr_frames(self) -> None:
+        # The clock is capture time, measured by the latest valid DF17 frame.
+        for icao, messages in list(self._cpr_frames.items()):
+            for cpr_format, frame in list(messages.items()):
+                if self._latest_sample_index - frame.sample_index > self._max_pair_samples:
+                    del messages[cpr_format]
+            if not messages:
+                del self._cpr_frames[icao]
+
+    def _remember_position(self, icao: str, frame: ModeSFrame, cpr_format: str) -> None:
+        if self._latest_sample_index - frame.sample_index > self._max_pair_samples:
+            return
+
+        messages = self._cpr_frames.setdefault(icao, {})
+        previous = messages.get(cpr_format)
+        if previous is None or frame.sample_index >= previous.sample_index:
+            messages[cpr_format] = frame
+
     def decode(self, frame: ModeSFrame) -> list[DecodedEvent]:
         """Decode DF17 identification and raw barometric airborne position."""
         header = parse_header(frame)
@@ -103,6 +147,9 @@ class ADSBDecoder:
 
         if crc24(bytes.fromhex(frame.hex)) != 0:
             return []
+
+        self._latest_sample_index = max(self._latest_sample_index, frame.sample_index)
+        self._expire_cpr_frames()
 
         if header.type_code in (1, 2, 3, 4):
             callsign = decode_callsign(frame)
@@ -118,13 +165,16 @@ class ADSBDecoder:
             )]
 
         if header.type_code in range(9, 19):
+            fields = decode_airborne_position(frame)
+            cpr_format = "odd" if fields["cpr_format"] == "odd" else "even"
+            self._remember_position(header.icao, frame, cpr_format)
             return [DecodedEvent(
                 icao=header.icao,
                 event_type="airborne_position",
-                fields=decode_airborne_position(frame),
+                fields=fields,
                 raw_frame=frame.hex,
                 observed_at_unix_ms=None,
             )]
 
-        # TODO: CPR pair state, airborne velocity and GNSS height (TC 20-22).
+        # TODO: CPR coordinates, airborne velocity and GNSS height (TC 20-22).
         return []
