@@ -44,9 +44,30 @@ def parse_header(frame: ModeSFrame) -> MessageHeader:
     )
 
 
+def decode_callsign(frame: ModeSFrame) -> str | None:
+    """Read callsign from an identification payload; caller checks DF/TC/CRC."""
+    binary = f"{int(frame.hex, 16):0112b}"
+    characters = []
+
+    # Message bits 41-88 contain eight characters of six bits each.
+    for start in range(40, 88, 6):
+        code = int(binary[start:start + 6], 2)
+        if 1 <= code <= 26:
+            characters.append(chr(ord("A") + code - 1))
+        elif 48 <= code <= 57:
+            characters.append(chr(ord("0") + code - 48))
+        elif code == 32:
+            characters.append(" ")
+        else:
+            # Reserved codes must not become invented callsign characters.
+            return None
+
+    return "".join(characters).rstrip() or None
+
+
 class ADSBDecoder:
     def decode(self, frame: ModeSFrame) -> list[DecodedEvent]:
-        """Reject unsupported/corrupted frames; payload decoding is still TODO."""
+        """Decode CRC-valid DF17 identification; other message types are skipped."""
         header = parse_header(frame)
         if header.df != 17:
             return []
@@ -54,4 +75,18 @@ class ADSBDecoder:
         if crc24(bytes.fromhex(frame.hex)) != 0:
             return []
 
-        raise NotImplementedError("Implement CRC-valid DF17 payload decoding next")
+        if header.type_code in (1, 2, 3, 4):
+            callsign = decode_callsign(frame)
+            if callsign is None:
+                return []
+
+            return [DecodedEvent(
+                icao=header.icao,
+                event_type="identification",
+                fields={"callsign": callsign},
+                raw_frame=frame.hex,
+                observed_at_unix_ms=None,
+            )]
+
+        # TODO: airborne position, CPR pair state and airborne velocity.
+        return []
