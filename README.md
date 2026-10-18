@@ -2,14 +2,15 @@
 
 An **educational** starter kit for a Raspberry Pi 4 + RTL2832U/R820T ADS-B receiver.
 This kit provides **contracts, real example DF17 frames, deterministic synthetic IQ,
-mock backend events, and tests**. It does NOT contain a complete decoder or a real RF recording.
-Each teammate must implement their own module and demonstrate it against shared fixtures.
+mock backend events, and tests**. It does not yet provide a complete live hardware
+receiver or a verified real RF recording. Modules are demonstrated against shared fixtures.
 
 The decoder implementation now covers DF17 identification, airborne position
 (barometric and GNSS height), and velocity subtypes 1-4. See
 [decoder coverage and field meanings](docs/DECODER.md) for supported encodings,
-integration details and remaining scope. Other pipeline modules are still starter
-interfaces, except the aircraft state/delivery adapter described below.
+integration details and remaining scope. CU8 file replay, a basic streaming 2 MS/s
+DSP detector, aircraft state/delivery, FastAPI transport and desktop UI are now
+implemented. Live RTL-SDR acquisition and real-air validation remain separate work.
 
 ## Decoder to backend delivery
 
@@ -58,9 +59,29 @@ In another terminal, send the seven known synthetic-fixture events:
 ```
 
 Choose **Canlı alıcı** in the UI, using `http://localhost:8000` as the backend URL.
-This in-memory first step uses one worker, starts empty and does not start SDR/DSP.
+This in-memory first step uses one worker and starts empty; run the IQ producer
+below in a separate process to feed DSP output. It does not start live SDR acquisition.
 See the [step-by-step backend guide](docs/LIVE_BACKEND.md) for architecture,
 same-process integration, origin configuration, tests and current limits.
+
+## IQ through DSP to the live backend
+
+The `--iq` path reads actual CU8 bytes, finds preambles, demodulates 112 PPM bits,
+and hands DF17 candidates to the CRC-validating decoder. It does not read the
+fixture's expected frame list. With the FastAPI service running:
+
+```bash
+.venv/bin/python -m pip install -r requirements-dsp.txt
+.venv/bin/python -m netradar.pipeline \
+  --iq fixtures/synthetic_adsb_2msps.cu8 --source synthetic \
+  | .venv/bin/python -m netradar.backend.forward
+```
+
+This detects the fixture's seven messages at their exact sample indices, then
+publishes them through HTTP/WS. The detector preserves frames crossing chunk
+boundaries and currently supports exactly 2 MS/s, 1090 MHz CU8 input. Raw replay
+does not acquire an invented observation timestamp. See the
+[DSP integration walkthrough](docs/DSP_INTEGRATION.md) for details and limits.
 
 ## Desktop radar interface
 
@@ -86,9 +107,9 @@ python3 tools/verify_fixtures.py
 ```
 
 No `pip install` is needed to inspect the fixtures or run the baseline tests.
-HTTP/WebSocket integration tests require `requirements-dev.txt`; without these
-dependencies those tests are explicitly skipped. Use `.venv/bin/python` for the
-full suite after installing the backend dependencies.
+HTTP/WebSocket and IQ/DSP integration tests require `requirements-dev.txt`;
+without optional dependencies the corresponding tests are explicitly skipped.
+Use `.venv/bin/python` for the full suite after installing development dependencies.
 To regenerate the synthetic RF-like baseband capture:
 
 ```bash

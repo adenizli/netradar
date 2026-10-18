@@ -37,7 +37,7 @@ python3 -m venv .venv
 ```
 
 Yalnız servisi çalıştırmak için `requirements-backend.txt` yeterlidir.
-`requirements-dev.txt`, buna HTTP/WebSocket test istemcisini ekler.
+`requirements-dev.txt`, buna HTTP/WebSocket test istemcisini ve DSP için NumPy ekler.
 
 - Sağlık kontrolü: `http://127.0.0.1:8000/healthz`
 - Mevcut uçaklar: `http://127.0.0.1:8000/api/aircraft`
@@ -65,6 +65,19 @@ koordinatları İstanbul'da olmak zorunda değildir; harita listesinden uçak se
 eskimesi beklenen davranıştır. Ölçülmüş mutlak saati olmayan kayda şu anın saati
 eklenmez.
 
+DSP artık bağlıdır. Hazır çerçeve listesini kullanmadan, IQ baytlarını gerçekten
+işleyen yol için aynı sunucuya şu üretici bağlanabilir:
+
+```bash
+.venv/bin/python -m netradar.pipeline \
+  --iq fixtures/synthetic_adsb_2msps.cu8 --source synthetic \
+  | .venv/bin/python -m netradar.backend.forward
+```
+
+Bu farklı bir test kaydıdır; mutlak saat içermeyen bağımsız kayıtları aynı store'da
+birbirinin devamı saymamak için kayıtlar arasında backend'i yeniden başlatın.
+Ayrıntılar: [DSP bağlantısı](DSP_INTEGRATION.md).
+
 DSP'nin üreteceği gerçek `ModeSFrame` JSONL için:
 
 ```bash
@@ -84,7 +97,7 @@ def publish(update):
     send_event("http://127.0.0.1:8000", DecodedEvent.from_dict(update["event"]))
 
 pipeline = DecoderPipeline(publish=publish)
-# DSP hazır olduğunda: pipeline.handle_frame(frame)
+# DSP'den gelen her ModeSFrame için: pipeline.handle_frame(frame)
 ```
 
 Bu HTTP üreticisi bloklayıcıdır; ASGI event loop'unda çalıştırılmaz. Servisle aynı
@@ -166,8 +179,8 @@ npm test
 npm run build
 ```
 
-Bağımlılıklar kurulmadan baseline Python testleri çalışır; on FastAPI testi
-açık bir kurulum açıklamasıyla skip edilir. Tam doğrulama için dev bağımlılıkları
+Bağımlılıklar kurulmadan baseline Python testleri çalışır; FastAPI ve IQ testleri
+ilgili bağımlılık yoksa açık bir kurulum açıklamasıyla skip edilir. Tam doğrulama için dev bağımlılıkları
 kurulmalıdır. TestClient ile snapshot, iki abone, yeniden bağlantı, veri kaybı,
 eski koordinat, CORS, bozuk girdi, kapanış/temizlik ve yavaş abone kontrol edildi.
 Ayrıca gerçek Uvicorn TCP/HTTP/WS bağlantısında fixture'ın yedi olayı iki aboneye

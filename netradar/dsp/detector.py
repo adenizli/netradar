@@ -1,146 +1,73 @@
-"""Arda: implement preamble detection + 112-bit PPM extraction."""
+"""Streaming 2 MS/s CU8 -> 112-bit DF17 candidates; decoder owns CRC validation."""
 from collections.abc import Iterable, Iterator
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 from netradar.contracts import IqChunk, ModeSFrame
-from netradar.dsp.preamble import detect_preambles
+from netradar.dsp.preamble import FRAME_SAMPLES, SAMPLE_RATE, detect_preambles
 
 
-def detect_frames(chunks: Iterable[IqChunk]) -> Iterator[ModeSFrame]:
-
-    SAMPLE_RATE = 2_000_000
-
-    # Read the first 0.5 seconds of the recording.
-    raw = np.fromfile(
-        "adsb.iq",
-        dtype=np.uint8,
-        count=SAMPLE_RATE
-    )
-
-    assert len(raw) % 2 == 0
-
-    # Convert interleaved bytes into I/Q pairs.
-    iq = raw.reshape(-1, 2).astype(np.float32)
-
-    I = iq[:, 0] - 127.5
-    Q = iq[:, 1] - 127.5
-
-    power = I**2 + Q**2
-
-    PULSE_POSITIONS = [0, 2, 7, 9]
-    QUIET_POSITIONS = [3, 4, 5, 6, 11, 12, 13, 14, 15]
-
-    # We need 240 samples for a complete long ADS-B frame.
-    n = min(len(power) - 239, 1_000_000)
-
-    if n <= 0:
-        raise ValueError("Not enough samples")
-
-    positions = np.arange(n)
-
-    pulse_values = np.stack([
-        power[positions + offset]
-        for offset in PULSE_POSITIONS
-    ])
-
-    quiet_values = np.stack([
-        power[positions + offset]
-        for offset in QUIET_POSITIONS
-    ])
-
-    pulse_mean = pulse_values.mean(axis=0)
-    quiet_mean = quiet_values.mean(axis=0)
-    pulse_min = pulse_values.min(axis=0)
-
-    score = pulse_mean / (quiet_mean + 1e-6)
-
-    print("Power percentiles:",
-        np.percentile(power, [50, 90, 99, 99.9, 100]))
-
-    print("Maximum score:", score.max())
-
-    print("Score > 3:",
-        np.sum(score > 3.0))
-
-    print("Score > 2:",
-        np.sum(score > 2.0))
-
-    print("Score > 1.5:",
-        np.sum(score > 1.5))
-
-    print("Minimum pulse condition:",
-        np.sum(pulse_min > 1.5 * quiet_mean))
-
-    print("Both conditions:",
-        np.sum(
-            (score > 3.0)
-            & (pulse_min > 1.5 * quiet_mean)
-        ))
-
-    # Detect preambles
-    detections = detect_preambles(power)
-
-    print("Number of candidates:", len(detections))
-    print("First detections:", detections[:10])
-
-    # Plot the first detected candidate
-    if detections:
-
-        start = detections[0]
-
-        window = power[start:start + 240]
-
-        time_us = np.arange(len(window)) / SAMPLE_RATE * 1e6
-
-        plt.figure(figsize=(12, 4))
-
-        plt.plot(time_us, window)
-
-        plt.axvspan(
-            0, 8,
-            alpha=0.15,
-            label="Preamble"
-        )
-
-        plt.xlabel("Time (µs)")
-        plt.ylabel("Squared magnitude")
-
-        plt.title(
-            f"Candidate ADS-B Frame at Sample {start}"
-        )
-
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-
-        plt.savefig("detected_frame.png")
-
-    else:
-        print("No candidates detected.")
-
-def demodulate_frame(power: np.ndarray, start: int):
-    # Skip 8 us preamble (16 samples)
-    data_start = start + 16
-
-    # Read 112 bits * 2 samples
-    data = power[data_start:data_start + 224]
-
-    if len(data) != 224:
+def demodulate_frame(power: np.ndarray, start: int) -> bytes | None:
+    """Read 112 PPM bits after the 16-sample preamble, MSB first."""
+    if start < 0 or power.ndim != 1 or start + FRAME_SAMPLES > len(power):
         return None
+    data = power[start + 16:start + FRAME_SAMPLES]
+    first, second = data[0::2], data[1::2]
+    # A tied half-bit has no defensible value; do not invent a zero.
+    if not np.isfinite(data).all() or np.any(first == second):
+        return None
+    return np.packbits(first > second, bitorder="big").tobytes()
 
-    # Each bit consists of two samples
-    first_half = data[0::2]
-    second_half = data[1::2]
 
-    # PPM decoding
-    bits = (first_half > second_half).astype(np.uint8)
+def detect_frames(chunks: Iterable[IqChunk], *, source: str = "rf",
+                  capture_start_unix_ms: int | None = None) -> Iterator[ModeSFrame]:
+    """Consume chunks lazily, retaining 239 samples across contiguous boundaries.
 
-    # Convert 112 bits into 14 bytes
-    frame = np.packbits(bits, bitorder="big")
-
-    return frame.tobytes()
-
-if __name__ == "__main__":
-    detect_frames([])
+    capture_start_unix_ms, when actually known, is the time of sample index zero.
+    A raw file has no such timestamp. Gaps discard the tail; overlap/rewind is an
+    input error, since indices identify one forward-moving capture.
+    """
+    if not isinstance(source, str) or not source:
+        raise ValueError("Frame source must be a nonempty string")
+    if capture_start_unix_ms is not None and (
+        type(capture_start_unix_ms) is not int or capture_start_unix_ms < 0
+    ):
+        raise ValueError("Capture time must be nonnegative integer milliseconds")
+    tail = np.empty(0, dtype=np.float32)
+    expected_start = None
+    iterator = iter(chunks)
+    try:
+        for chunk in iterator:
+            if chunk.sample_rate_hz != SAMPLE_RATE:
+                raise ValueError("DSP currently supports exactly 2,000,000 samples/second")
+            if chunk.center_frequency_hz != 1_090_000_000:
+                raise ValueError("DSP expects a 1090 MHz ADS-B capture")
+            if chunk.sample_count == 0:
+                continue
+            if expected_start is not None:
+                if chunk.start_sample_index < expected_start:
+                    raise ValueError("IQ chunks overlap or rewind within one capture")
+                if chunk.start_sample_index != expected_start:
+                    tail = np.empty(0, dtype=np.float32)
+            iq = np.frombuffer(chunk.data, dtype=np.uint8).reshape(-1, 2).astype(np.float32)
+            iq -= 127.5
+            current_power = np.square(iq).sum(axis=1)
+            power = np.concatenate((tail, current_power)) if tail.size else current_power
+            buffer_start = chunk.start_sample_index - len(tail)
+            expected_start = chunk.start_sample_index + chunk.sample_count
+            for start in detect_preambles(power):
+                raw = demodulate_frame(power, start)
+                if raw is None or raw[0] >> 3 != 17:
+                    continue
+                sample_index = buffer_start + start
+                observed = None if capture_start_unix_ms is None else (
+                    capture_start_unix_ms + sample_index * 1000 // SAMPLE_RATE
+                )
+                yield ModeSFrame(hex=raw.hex().upper(), sample_index=sample_index,
+                                 source=source, observed_at_unix_ms=observed)
+            # Complete starts were scanned once; only incomplete possible starts remain.
+            tail = power[-(FRAME_SAMPLES - 1):].copy()
+    finally:
+        close = getattr(iterator, "close", None)
+        if close is not None:
+            close()

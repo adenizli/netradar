@@ -63,14 +63,9 @@ def detect_preambles(power: np.ndarray) -> list[int]:
 
         candidates = positions[valid]
 
-        for index in candidates:
-
-            index = int(index)
-
-            # Avoid reporting nearby detections repeatedly.
-            if detections and index - detections[-1] < 8:
-                continue
-
-            detections.append(index)
+        # Do not let an earlier false candidate suppress a nearby real frame.
+        # Streaming overlap is handled by the 239-sample tail in detect_frames;
+        # only the decoder decides whether a candidate has a valid CRC.
+        detections.extend(candidates.tolist())
 
     return detections

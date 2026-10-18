@@ -34,8 +34,12 @@ A 2 MS/s input uses 0.5 us per sample. For unsigned RTL-SDR CU8, I and Q are eac
 `mag2 = (I-127.5)**2 + (Q-127.5)**2`.
 
 Chunking: the preamble takes 16 complex samples and a long payload 224 samples,
-**240 complex samples total**. Arda must handle a message crossing a chunk boundary
-(e.g., preserve the last 239 samples, and prevent duplicate detections).
+**240 complex samples total**. The implemented detector preserves the last 239
+power samples, scans complete starts once and handles frames crossing one or
+many chunk boundaries. Gaps discard the tail, while overlap/rewind is rejected.
+Input currently requires 2 MS/s at 1090 MHz; it does not silently resample.
+`replay_cu8()` implements chunked file acquisition; `stream_rtlsdr()` remains
+the live hardware adapter stub. See [DSP integration](DSP_INTEGRATION.md).
 
 ## B. DSP -> Decoder
 
@@ -53,6 +57,12 @@ ModeSFrame(
 DSP does NOT decode ICAO, position, callsign, etc. It estimates frame start and bytes.
 CRC verification belongs to decoder, although DSP may expose confidence metadata later.
 Initial scope: **112-bit DF17**. Other frames are out of MVP scope.
+
+`detect_frames(chunks, source="replay", capture_start_unix_ms=None)` yields these
+objects lazily. An explicitly measured sample-zero timestamp is translated as
+`capture_start_unix_ms + sample_index * 1000 // 2_000_000`. Absent an anchor,
+`observed_at_unix_ms` remains null. `source` must distinguish synthetic tests,
+file replay and actual RF. The detector does not read fixture metadata/offsets.
 
 ## C. Decoder -> Backend
 

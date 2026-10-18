@@ -1,5 +1,5 @@
 import numpy as np
-from preamble import detect_preambles
+from netradar.dsp.preamble import detect_preambles
 
 # 500 samples of background noise
 power = np.ones(500, dtype=np.float32)

@@ -21,6 +21,26 @@ if HAS_BACKEND:
 
 @unittest.skipUnless(HAS_BACKEND, "Install requirements-dev.txt for HTTP/WebSocket integration tests")
 class ServerTest(unittest.TestCase):
+    @unittest.skipUnless(find_spec("numpy") is not None, "Install requirements-dsp.txt for full IQ integration")
+    def test_iq_detection_reaches_decoder_store_and_websocket(self):
+        from netradar.acquisition.receiver import replay_cu8
+        from netradar.dsp.detector import detect_frames
+        from tests.test_dsp import FIXTURE
+        service = TrafficService()
+        received = []
+        with TestClient(create_app(service=service)) as client:
+            with client.websocket_connect("/ws/aircraft") as websocket:
+                for frame in detect_frames(replay_cu8(FIXTURE, chunk_samples=241), source="synthetic"):
+                    updates = client.portal.call(service.handle_frame, frame)
+                    for update in updates:
+                        self.assertEqual(websocket.receive_json(), update)
+                        received.append(update)
+                snapshot = client.get("/api/aircraft").json()
+                self.assertEqual(len(received), 7)
+                self.assertEqual(len(snapshot), 5)
+                self.assertEqual(len([a for a in snapshot if a["latitude"] is not None]), 2)
+                self.assertTrue(all(u["event"]["metadata"]["source"] == "synthetic" for u in received))
+
     def test_empty_snapshot_health_and_no_cache(self):
         with TestClient(create_app()) as client:
             self.assertEqual(client.get("/healthz").json()["status"], "ok")
