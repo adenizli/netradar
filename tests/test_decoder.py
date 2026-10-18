@@ -406,20 +406,19 @@ class IdentificationTest(unittest.TestCase):
 class VelocityComponentsTest(unittest.TestCase):
     def test_published_velocity_components_and_event_contract(self):
         frame = ModeSFrame(hex="8D485020994409940838175B284F", sample_index=220000)
-        self.assertEqual(ADSBDecoder().decode(frame), [DecodedEvent(
-            icao="485020",
-            event_type="airborne_velocity",
-            fields={
-                "subtype": 1,
-                "velocity_east_knots": -8,
-                "velocity_north_knots": -159,
-                "speed_knots": None,
-                "track_deg": None,
-                "vertical_rate_fpm": None,
-            },
-            raw_frame=frame.hex,
-            observed_at_unix_ms=None,
-        )])
+        events = ADSBDecoder().decode(frame)
+        self.assertEqual(len(events), 1)
+        event = events[0]
+        self.assertEqual(event.icao, "485020")
+        self.assertEqual(event.event_type, "airborne_velocity")
+        self.assertEqual(event.raw_frame, frame.hex)
+        self.assertIsNone(event.observed_at_unix_ms)
+        self.assertEqual(event.fields["subtype"], 1)
+        self.assertEqual(event.fields["velocity_east_knots"], -8)
+        self.assertEqual(event.fields["velocity_north_knots"], -159)
+        self.assertAlmostEqual(event.fields["speed_knots"], 159.20113065, places=8)
+        self.assertAlmostEqual(event.fields["track_deg"], 182.88037755, places=8)
+        self.assertIsNone(event.fields["vertical_rate_fpm"])
 
     def test_both_subtypes_and_all_direction_combinations(self):
         for subtype, scale in ((1, 1), (2, 4)):
@@ -464,6 +463,60 @@ class VelocityComponentsTest(unittest.TestCase):
     def test_corrupted_velocity_is_rejected(self):
         frame = ModeSFrame(hex="8D485020994409940838175B284E", sample_index=0)
         self.assertEqual(ADSBDecoder().decode(frame), [])
+
+
+class GroundSpeedTrackTest(unittest.TestCase):
+    def test_cardinal_directions(self):
+        for east_code, north_code, west, south, track in (
+            (1, 11, 0, 0, 0), (11, 1, 0, 0, 90),
+            (1, 11, 0, 1, 180), (11, 1, 1, 0, 270),
+        ):
+            with self.subTest(track=track):
+                frame = make_velocity_frame(
+                    east_code=east_code, north_code=north_code, west=west, south=south,
+                )
+                fields = ADSBDecoder().decode(frame)[0].fields
+                self.assertEqual(fields["speed_knots"], 10)
+                self.assertEqual(fields["track_deg"], track)
+
+    def test_diagonal_directions_cover_all_quadrants(self):
+        for west, south, track in ((0, 0, 45), (0, 1, 135), (1, 1, 225), (1, 0, 315)):
+            with self.subTest(track=track):
+                frame = make_velocity_frame(east_code=11, north_code=11, west=west, south=south)
+                fields = ADSBDecoder().decode(frame)[0].fields
+                self.assertAlmostEqual(fields["speed_knots"], 14.1421356237, places=8)
+                self.assertAlmostEqual(fields["track_deg"], track, places=8)
+
+    def test_subtype_two_scales_speed_but_keeps_track(self):
+        # A 3-4-5 triangle becomes 12-16-20 in subtype 2.
+        for subtype, speed in ((1, 5), (2, 20)):
+            with self.subTest(subtype=subtype):
+                frame = make_velocity_frame(subtype=subtype, east_code=4, north_code=5)
+                fields = ADSBDecoder().decode(frame)[0].fields
+                self.assertEqual(fields["speed_knots"], speed)
+                self.assertAlmostEqual(fields["track_deg"], 36.86989765, places=8)
+
+    def test_missing_component_does_not_invent_speed_or_track(self):
+        for east_code, north_code in ((0, 160), (9, 0), (0, 0)):
+            with self.subTest(east_code=east_code, north_code=north_code):
+                frame = make_velocity_frame(east_code=east_code, north_code=north_code)
+                fields = ADSBDecoder().decode(frame)[0].fields
+                self.assertIsNone(fields["speed_knots"])
+                self.assertIsNone(fields["track_deg"])
+
+    def test_stationary_aircraft_has_zero_speed_and_unknown_track(self):
+        for subtype in (1, 2):
+            with self.subTest(subtype=subtype):
+                frame = make_velocity_frame(subtype=subtype, east_code=1, north_code=1)
+                fields = ADSBDecoder().decode(frame)[0].fields
+                self.assertEqual(fields["speed_knots"], 0)
+                self.assertIsNone(fields["track_deg"])
+
+    def test_west_of_north_bearing_wraps_into_positive_range(self):
+        frame = make_velocity_frame(east_code=2, north_code=1023, west=1)
+        fields = ADSBDecoder().decode(frame)[0].fields
+        self.assertGreater(fields["track_deg"], 359)
+        self.assertLess(fields["track_deg"], 360)
 
 
 class AirbornePositionTest(unittest.TestCase):

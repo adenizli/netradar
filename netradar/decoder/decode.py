@@ -95,8 +95,8 @@ def decode_airborne_position(frame: ModeSFrame) -> dict[str, int | float | str |
     }
 
 
-def decode_velocity_components(frame: ModeSFrame) -> dict[str, int | None] | None:
-    """Read TC19 subtype 1/2 ground-velocity components; caller checks DF/TC/CRC."""
+def decode_velocity_components(frame: ModeSFrame) -> dict[str, int | float | None] | None:
+    """Read TC19 subtype 1/2 ground velocity; caller checks DF/TC/CRC."""
     binary = f"{int(frame.hex, 16):0112b}"
     subtype = int(binary[37:40], 2)
     if subtype not in (1, 2):
@@ -114,12 +114,20 @@ def decode_velocity_components(frame: ModeSFrame) -> dict[str, int | None] | Non
     if north is not None and binary[56] == "1":
         north = -north
 
+    speed = None
+    track = None
+    if east is not None and north is not None:
+        speed = math.hypot(east, north)
+        if speed > 0:
+            # atan2(east, north) gives clockwise bearing from north.
+            track = math.degrees(math.atan2(east, north)) % 360
+
     return {
         "subtype": subtype,
         "velocity_east_knots": east,
         "velocity_north_knots": north,
-        "speed_knots": None,
-        "track_deg": None,
+        "speed_knots": speed,
+        "track_deg": track,
         "vertical_rate_fpm": None,
     }
 
@@ -284,5 +292,5 @@ class ADSBDecoder:
                 observed_at_unix_ms=None,
             )]
 
-        # TODO: total speed, track, vertical rate, airspeed and GNSS height.
+        # TODO: vertical rate, airspeed and GNSS height.
         return []
