@@ -37,6 +37,16 @@ function version(v: unknown) {
   if (v !== undefined && v !== "1.0" && v !== "1.1")
     throw new Error("Desteklenmeyen veri şeması.");
 }
+function streamVersion(v: Record<string, unknown>) {
+  if (v.stream_id === undefined && v.stream_sequence === undefined) return;
+  if (
+    typeof v.stream_id !== "string" ||
+    !v.stream_id ||
+    !Number.isSafeInteger(v.stream_sequence) ||
+    (v.stream_sequence as number) < 0
+  )
+    throw new Error("Geçersiz yayın sırası.");
+}
 export function parseEvent(v: unknown): DecoderEvent {
   if (
     !object(v) ||
@@ -67,6 +77,7 @@ export function parseAircraft(v: unknown): Aircraft {
   assertJson(v);
   if (!object(v) || typeof v.icao !== "string" || !/^[0-9A-F]{6}$/.test(v.icao))
     throw new Error("Geçersiz ICAO adresi.");
+  streamVersion(v);
   for (const key of numberFields)
     if (
       v[key] != null &&
@@ -125,8 +136,14 @@ export function parseUpdate(v: unknown): AircraftUpdate {
   if (!object(v) || v.type !== "aircraft_update")
     throw new Error("Geçersiz uçak güncellemesi.");
   version(v.schema_version);
+  streamVersion(v);
   assertJson(v);
   const data = parseAircraft(v.data);
+  if (
+    v.stream_id !== data.stream_id ||
+    v.stream_sequence !== data.stream_sequence
+  )
+    throw new Error("Yayın sırası ve uçak özeti uyuşmuyor.");
   const event = v.event == null ? null : parseEvent(v.event);
   if (event && event.icao !== data.icao)
     throw new Error("Güncelleme ICAO adresi uyuşmuyor.");

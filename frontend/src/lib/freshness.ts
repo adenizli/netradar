@@ -118,6 +118,19 @@ export function mergeContact(
   tick = performance.now(),
 ): Contact {
   let a = { ...update.data };
+  // Buffered events may precede the HTTP snapshot. Keep its newer full summary,
+  // including callsign/velocity, while retaining the incoming raw event below.
+  if (
+    !demo &&
+    old &&
+    a.stream_id &&
+    a.stream_id === old.aircraft.stream_id &&
+    typeof a.stream_sequence === "number" &&
+    typeof old.aircraft.stream_sequence === "number" &&
+    a.stream_sequence <= old.aircraft.stream_sequence
+  ) {
+    a = { ...old.aircraft };
+  }
   let evidence = fixEvent(a, update.event);
   let key = keyFor(a, evidence);
   let changed = !old || key !== old.positionKey;

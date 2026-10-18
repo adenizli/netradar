@@ -4,7 +4,7 @@ import {
   refreshContact,
   POSITION_STALE_AFTER_MS,
 } from "../src/lib/freshness";
-import { parseAircraft } from "../src/lib/contracts";
+import { parseAircraft, parseUpdate } from "../src/lib/contracts";
 import { GeofenceMonitor, membersInZone } from "../src/lib/geofence";
 import { destination } from "../src/lib/geo";
 import type {
@@ -50,6 +50,67 @@ function update(sample = 100, km = 10, age = 0): AircraftUpdate {
   };
 }
 describe("independent position freshness", () => {
+  it("buffered stream summaries cannot roll a newer snapshot back", () => {
+    const snapshot = update();
+    Object.assign(snapshot.data, {
+      stream_id: "server-one",
+      stream_sequence: 20,
+      callsign: "NEWNAME",
+      speed_knots: 400,
+    });
+    const first = mergeContact(undefined, snapshot, 1000, false, 0);
+    const buffered = update();
+    Object.assign(buffered.data, {
+      stream_id: "server-one",
+      stream_sequence: 10,
+      callsign: "OLDNAME",
+      speed_knots: 100,
+    });
+    const next = mergeContact(first, buffered, 2000, false, 1000);
+    expect(next.aircraft.callsign).toBe("NEWNAME");
+    expect(next.aircraft.speed_knots).toBe(400);
+    expect(next.aircraft.stream_sequence).toBe(20);
+    expect(next.event).toEqual(buffered.event);
+    expect(next.aircraft.position_age_ms).toBe(1000);
+    const later = update(200);
+    Object.assign(later.data, {
+      stream_id: "server-one",
+      stream_sequence: 21,
+      callsign: "LATER",
+    });
+    expect(mergeContact(next, later, 3000, false, 2000).aircraft.callsign).toBe(
+      "LATER",
+    );
+  });
+  it("stream sequence restarts are isolated by server session identity", () => {
+    const firstUpdate = update();
+    Object.assign(firstUpdate.data, {
+      stream_id: "server-one",
+      stream_sequence: 500,
+      callsign: "OLD",
+    });
+    const first = mergeContact(undefined, firstUpdate, 1000, false, 0);
+    const restarted = update(200);
+    Object.assign(restarted.data, {
+      stream_id: "server-two",
+      stream_sequence: 1,
+      callsign: "NEW",
+    });
+    expect(
+      mergeContact(first, restarted, 2000, false, 1000).aircraft.callsign,
+    ).toBe("NEW");
+  });
+  it("validates paired stream identities on envelopes and aircraft", () => {
+    const value = update();
+    Object.assign(value.data, { stream_id: "server", stream_sequence: 2 });
+    expect(() => parseUpdate(value)).toThrow();
+    Object.assign(value, { stream_id: "server", stream_sequence: 2 });
+    expect(parseUpdate(value).stream_sequence).toBe(2);
+    expect(() =>
+      parseAircraft({ ...value.data, stream_sequence: -1 }),
+    ).toThrow();
+    expect(() => parseAircraft({ ...value.data, stream_id: "" })).toThrow();
+  });
   it("callsign messages never reset the position age", () => {
     const first = mergeContact(undefined, update(), 1000, false, 0);
     const identity = {

@@ -35,8 +35,32 @@ Each input line must contain `hex`, `sample_index`, and optionally `source` from
 `ModeSFrame`. Keep one capture per invocation. In Python, use
 `DecoderPipeline(publish=callback).handle_frame(frame)`; a separate backend process
 can receive `event.to_json()` via `AircraftStore.apply_json()`. The optional callback
-receives every full update. HTTP/WebSocket hosting and live SDR acquisition are
-not started by this adapter.
+receives every full update. This adapter itself does not start HTTP/WS or SDR
+acquisition. The separate FastAPI service below hosts the live transport.
+
+## FastAPI live backend
+
+`GET /api/aircraft` serves the current snapshot; `WS /ws/aircraft` streams full
+updates. Producers send decoded events to `POST /api/events`. Position freshness
+and all decoder fields are preserved. Run from the repository root:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m uvicorn netradar.backend.server:app --host 127.0.0.1 --port 8000 --workers 1
+```
+
+In another terminal, send the seven known synthetic-fixture events:
+
+```bash
+.venv/bin/python -m netradar.pipeline --fixture fixtures/synthetic_adsb_2msps.json \
+  | .venv/bin/python -m netradar.backend.forward
+```
+
+Choose **Canlı alıcı** in the UI, using `http://localhost:8000` as the backend URL.
+This in-memory first step uses one worker, starts empty and does not start SDR/DSP.
+See the [step-by-step backend guide](docs/LIVE_BACKEND.md) for architecture,
+same-process integration, origin configuration, tests and current limits.
 
 ## Desktop radar interface
 
@@ -44,7 +68,7 @@ The React + TypeScript + Leaflet interface is now implemented in `frontend/`.
 It includes a green receiver-centered radar map, directional aircraft markers,
 full decoder-event details, multiple radius zones and entry/exit notifications.
 It starts with clearly labeled fictional demo traffic, and a separate live
-adapter targets the planned HTTP/WS backend. The compact desktop layout keeps
+adapter connects to the FastAPI HTTP/WS backend. The compact desktop layout keeps
 aircraft, map and zone controls together without a navigation rail or file uploader. See [frontend setup and integration](frontend/README.md).
 
 ```bash
@@ -62,6 +86,9 @@ python3 tools/verify_fixtures.py
 ```
 
 No `pip install` is needed to inspect the fixtures or run the baseline tests.
+HTTP/WebSocket integration tests require `requirements-dev.txt`; without these
+dependencies those tests are explicitly skipped. Use `.venv/bin/python` for the
+full suite after installing the backend dependencies.
 To regenerate the synthetic RF-like baseband capture:
 
 ```bash

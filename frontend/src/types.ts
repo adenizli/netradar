@@ -13,6 +13,8 @@ export interface DecoderEvent {
 }
 export interface Aircraft {
   icao: string;
+  stream_id?: string;
+  stream_sequence?: number;
   callsign: string | null;
   latitude: number | null;
   longitude: number | null;
@@ -40,6 +42,8 @@ export interface Aircraft {
 }
 export interface AircraftUpdate {
   schema_version?: string;
+  stream_id?: string;
+  stream_sequence?: number;
   type: "aircraft_update";
   data: Aircraft;
   event: DecoderEvent | null;

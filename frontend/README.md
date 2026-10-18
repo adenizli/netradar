@@ -93,10 +93,11 @@ Every live `event`, unknown nested `fields` / `metadata` extension, and
 
 ## Live backend adapter (server provided by backend module)
 
-The Python delivery adapter **does not currently host HTTP or WebSocket**. When
-the backend service is ready, configure its base URL in the settings dialog, or
+The FastAPI service in `netradar/backend/server.py` now hosts HTTP and WebSocket.
+See the [step-by-step backend guide](../docs/LIVE_BACKEND.md) to start it and
+forward decoder events. Configure its base URL in the settings dialog, or
 copy `.env.example` to `.env.local` and set `VITE_BACKEND_URL`. Then choose **Canlı
-alıcı**. Backend requirements:
+alıcı**. Implemented backend contract:
 
 1. `GET /api/aircraft` returns the **plain array** from `AircraftStore.snapshot()`.
 2. `WS /ws/aircraft` sends one complete `aircraft_update` v1.1 envelope per message:
@@ -109,9 +110,11 @@ alıcı**. Backend requirements:
    complete aggregated state and real `event` contains the complete decoder event.
 3. Subscribe the WebSocket before serving the snapshot. The UI buffers events
    until snapshot installation, then applies them in arrival order. The backend
-   must make the snapshot and subscription refer to a coherent stream; full state
-   updates during initialization must arrive in order. This contract has no sequence
-   number, so server-side snapshot ordering remains the server's responsibility.
+   registers each subscriber before accepting its WebSocket. Its `stream_id` and
+   `stream_sequence` appear on the envelope, aircraft summary and snapshot entries;
+   the UI ignores older/equal summaries within that stream, retaining the raw event.
+   This prevents buffered summaries from rolling a newer snapshot back. Stream
+   order is separate from RF measurement order and does not refresh old positions.
 4. Allow the frontend origin with CORS for HTTP and WebSocket origin validation.
    For an HTTPS frontend use an HTTPS/WSS backend. If using a path prefix, e.g.
    `https://host/radar`, routes become `/radar/api/aircraft` and `/radar/ws/aircraft`.

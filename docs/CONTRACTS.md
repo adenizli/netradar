@@ -159,9 +159,19 @@ The `DecoderPipeline` delivers events to this store and an optional publisher
 callback. Its CLI emits the entire envelope as one JSON object per line. No HTTP
 or WebSocket server is started by this module.
 
-The planned HTTP adapter should expose `snapshot()` as `GET /api/aircraft` and
-publish these same envelopes on `WS /ws/aircraft`. Reconnect should fetch a fresh
-snapshot. Demo fixture updates are fictional UI data and have `event: null`.
+The implemented FastAPI service exposes `snapshot()` as `GET /api/aircraft` and
+publishes these same envelopes on `WS /ws/aircraft`. `POST /api/events` accepts a
+DecodedEvent, validates it, applies it to the authoritative store and broadcasts
+the resulting full update. Reconnect fetches a fresh snapshot. Demo fixture
+updates are fictional UI data and have `event: null`. See [live backend](LIVE_BACKEND.md).
+
+The transport adds optional `stream_id` (server-session identity) and
+`stream_sequence` (monotonically increasing event delivery order) to each envelope
+and its `data`. Snapshot entries carry each aircraft's last sequence in that
+session. The frontend does not apply older/equal summaries over a newer snapshot
+in the same session, but retains their incoming raw event for inspection. These
+fields order transport summaries, not RF measurements; position chronology and
+age remain independent. Legacy v1.1 messages without the pair are still accepted.
 
 ## E. One Pi vs. multiple computers
 
@@ -172,7 +182,7 @@ optional short, on-demand IQ windows are for debugging only.
 
 ## F. Desktop frontend adapter
 
-The implemented frontend consumes the planned HTTP array snapshot and complete
+The implemented frontend consumes the FastAPI HTTP array snapshot and complete
 WebSocket `aircraft_update` envelopes above. Its other mode is explicitly fictional
 demo traffic; file upload/replay is not part of the operator interface. The Python
 JSONL delivery adapter remains available to backend developers. The UI does not
