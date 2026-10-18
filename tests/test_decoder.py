@@ -42,12 +42,14 @@ def make_position_frame(
 def make_velocity_frame(
     *, subtype: int = 1, east_code: int = 9, north_code: int = 160,
     west: int = 0, south: int = 0,
+    vertical_code: int = 0, descending: int = 0, barometric: int = 0,
 ) -> ModeSFrame:
     """Build a TC19 input with independently computed parity."""
     payload = (
         f"{19:05b}{subtype:03b}" + "11111"
         + f"{west:01b}{east_code:010b}{south:01b}{north_code:010b}"
-        + "1" * 21  # Unrelated trailer bits must not enter the components.
+        + f"{barometric:01b}{descending:01b}{vertical_code:09b}"
+        + "1" * 10  # Reserved/height-difference bits must not enter the rate.
     )
     raw = bytearray.fromhex("8D48502000000000000000000000")
     raw[4:11] = int(payload, 2).to_bytes(7, "big")
@@ -418,7 +420,8 @@ class VelocityComponentsTest(unittest.TestCase):
         self.assertEqual(event.fields["velocity_north_knots"], -159)
         self.assertAlmostEqual(event.fields["speed_knots"], 159.20113065, places=8)
         self.assertAlmostEqual(event.fields["track_deg"], 182.88037755, places=8)
-        self.assertIsNone(event.fields["vertical_rate_fpm"])
+        self.assertEqual(event.fields["vertical_rate_fpm"], -832)
+        self.assertEqual(event.fields["vertical_rate_source"], "gnss")
 
     def test_both_subtypes_and_all_direction_combinations(self):
         for subtype, scale in ((1, 1), (2, 4)):
@@ -517,6 +520,48 @@ class GroundSpeedTrackTest(unittest.TestCase):
         fields = ADSBDecoder().decode(frame)[0].fields
         self.assertGreater(fields["track_deg"], 359)
         self.assertLess(fields["track_deg"], 360)
+
+
+class VerticalRateTest(unittest.TestCase):
+    def test_both_subtypes_share_vertical_scale_sign_and_source(self):
+        for subtype in (1, 2):
+            for descending, rate in ((0, 832), (1, -832)):
+                for barometric, source in ((0, "gnss"), (1, "barometric")):
+                    with self.subTest(subtype=subtype, descending=descending, source=source):
+                        frame = make_velocity_frame(
+                            subtype=subtype, vertical_code=14,
+                            descending=descending, barometric=barometric,
+                        )
+                        self.assertEqual(crc24(bytes.fromhex(frame.hex)), 0)
+                        fields = ADSBDecoder().decode(frame)[0].fields
+                        self.assertEqual(fields["vertical_rate_fpm"], rate)
+                        self.assertEqual(fields["vertical_rate_source"], source)
+
+    def test_missing_rate_is_distinct_from_level_flight(self):
+        for code, expected in ((0, None), (1, 0)):
+            for descending in (0, 1):
+                with self.subTest(code=code, descending=descending):
+                    frame = make_velocity_frame(vertical_code=code, descending=descending)
+                    fields = ADSBDecoder().decode(frame)[0].fields
+                    self.assertEqual(fields["vertical_rate_fpm"], expected)
+                    self.assertIsNotNone(fields["speed_knots"])
+
+    def test_vertical_rate_boundaries(self):
+        for code, expected in ((2, 64), (511, 32640)):
+            for descending in (0, 1):
+                with self.subTest(code=code, descending=descending):
+                    frame = make_velocity_frame(vertical_code=code, descending=descending)
+                    fields = ADSBDecoder().decode(frame)[0].fields
+                    self.assertEqual(fields["vertical_rate_fpm"], -expected if descending else expected)
+
+    def test_known_vertical_rate_survives_missing_horizontal_components(self):
+        frame = make_velocity_frame(east_code=0, north_code=0, vertical_code=14, descending=1)
+        fields = ADSBDecoder().decode(frame)[0].fields
+        self.assertEqual(fields["vertical_rate_fpm"], -832)
+        self.assertIsNone(fields["velocity_east_knots"])
+        self.assertIsNone(fields["velocity_north_knots"])
+        self.assertIsNone(fields["speed_knots"])
+        self.assertIsNone(fields["track_deg"])
 
 
 class AirbornePositionTest(unittest.TestCase):
