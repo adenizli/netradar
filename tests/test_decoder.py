@@ -131,7 +131,8 @@ class CPRPairTest(unittest.TestCase):
         odd = ModeSFrame(hex=self.ODD, sample_index=20000)
         decoder.decode(even)
         decoder.decode(odd)
-        bad_hex = f"{int(self.ODD, 16) ^ 1:028X}"
+        # Two flipped bits: a single-bit error from a known aircraft is repaired.
+        bad_hex = f"{int(self.ODD, 16) ^ 0b11:028X}"
         for sample_index in (30000, 100_000_000):
             with self.subTest(sample_index=sample_index):
                 bad = ModeSFrame(hex=bad_hex, sample_index=sample_index)
@@ -357,6 +358,60 @@ class DecoderValidationTest(unittest.TestCase):
         self.assertEqual(crc24(raw), 0)
         frame = ModeSFrame(hex=raw.hex().upper(), sample_index=0)
         self.assertEqual(ADSBDecoder().decode(frame), [])
+
+
+def flip_bits(frame: ModeSFrame, *bits: int, sample_index: int) -> ModeSFrame:
+    value = int(frame.hex, 16)
+    for bit in bits:
+        value ^= 1 << (111 - bit)
+    return replace(frame, hex=f"{value:028X}", sample_index=sample_index)
+
+
+class SingleBitCorrectionTest(unittest.TestCase):
+    KLM = ModeSFrame(hex="8D4840D6202CC371C32CE0576098", sample_index=0)
+    SECOND = 2_000_000
+
+    def test_unknown_aircraft_is_never_corrected(self):
+        self.assertEqual(ADSBDecoder().decode(flip_bits(self.KLM, 60, sample_index=0)), [])
+
+    def test_known_aircraft_single_bit_error_is_repaired(self):
+        decoder = ADSBDecoder()
+        self.assertEqual(len(decoder.decode(self.KLM)), 1)
+        for bit in (5, 20, 60, 111):  # ICAO, payload and parity bits
+            with self.subTest(bit=bit):
+                damaged = flip_bits(self.KLM, bit, sample_index=30 * self.SECOND)
+                [event] = decoder.decode(damaged)
+                self.assertEqual(event.fields, {"callsign": "KLM1023"})
+                self.assertEqual(event.raw_frame, self.KLM.hex)
+                self.assertEqual(event.metadata["crc_corrected_bit"], bit)
+                self.assertEqual(event.metadata["received_frame"], damaged.hex)
+                self.assertTrue(event.metadata["crc_valid"])
+
+    def test_clean_events_do_not_gain_correction_metadata(self):
+        [event] = ADSBDecoder().decode(self.KLM)
+        self.assertNotIn("crc_corrected_bit", event.metadata)
+        self.assertNotIn("received_frame", event.metadata)
+
+    def test_two_bit_errors_and_df_changes_are_rejected(self):
+        decoder = ADSBDecoder()
+        decoder.decode(self.KLM)
+        self.assertEqual(decoder.decode(flip_bits(self.KLM, 40, 41, sample_index=1)), [])
+        self.assertEqual(decoder.decode(flip_bits(self.KLM, 2, sample_index=1)), [])
+
+    def test_trust_expires_and_corrections_do_not_extend_it(self):
+        decoder = ADSBDecoder()
+        decoder.decode(self.KLM)
+        self.assertEqual(len(decoder.decode(flip_bits(self.KLM, 60, sample_index=50 * self.SECOND))), 1)
+        # The fix at 50 s does not refresh trust; the clean frame at 0 s is now too old.
+        self.assertEqual(decoder.decode(flip_bits(self.KLM, 60, sample_index=70 * self.SECOND)), [])
+        decoder.decode(replace(self.KLM, sample_index=71 * self.SECOND))
+        self.assertEqual(len(decoder.decode(flip_bits(self.KLM, 60, sample_index=72 * self.SECOND))), 1)
+
+    def test_reset_forgets_known_aircraft(self):
+        decoder = ADSBDecoder()
+        decoder.decode(self.KLM)
+        decoder.reset()
+        self.assertEqual(decoder.decode(flip_bits(self.KLM, 60, sample_index=1)), [])
 
 
 class IdentificationTest(unittest.TestCase):

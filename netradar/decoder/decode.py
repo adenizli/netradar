@@ -1,5 +1,5 @@
 """Ahmet + Ahmet Eren: implement Mode S / ADS-B protocol processing."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 from uuid import uuid4
 
@@ -20,6 +20,15 @@ def crc24(data: bytes) -> int:
             remainder ^= generator << (bit_index - 24)
 
     return remainder
+
+
+# CRC-24 is linear: flipping bit b of a 112-bit message always leaves the
+# same remainder, so a remainder identifies a single-bit error position.
+SINGLE_BIT_SYNDROMES = {crc24((1 << (111 - bit)).to_bytes(14, "big")): bit for bit in range(112)}
+
+# A single-bit fix is only trusted for an aircraft heard with a clean CRC this
+# recently (capture time). Otherwise random noise could invent an aircraft.
+KNOWN_ICAO_SECONDS = 60
 
 
 @dataclass(frozen=True)
@@ -251,13 +260,17 @@ class ADSBDecoder:
         self.capture_id = capture_id if capture_id is not None else uuid4().hex
         self._sample_rate_hz = sample_rate_hz
         self._max_pair_samples = 10 * sample_rate_hz
+        self._known_icao_samples = KNOWN_ICAO_SECONDS * sample_rate_hz
         self._latest_sample_index = 0
         self._cpr_frames: dict[tuple[str, str], dict[str, ModeSFrame]] = {}
+        # ICAO -> sample index of its latest clean-CRC (uncorrected) frame.
+        self._clean_icaos: dict[str, int] = {}
 
     def reset(self) -> None:
         """Start a new capture without carrying over old CPR messages."""
         self.capture_id = uuid4().hex
         self._cpr_frames.clear()
+        self._clean_icaos.clear()
         self._latest_sample_index = 0
 
     def get_cpr_pair(
@@ -281,6 +294,23 @@ class ADSBDecoder:
                     del messages[cpr_format]
             if not messages:
                 del self._cpr_frames[key]
+        for icao, sample_index in list(self._clean_icaos.items()):
+            if self._latest_sample_index - sample_index > self._known_icao_samples:
+                del self._clean_icaos[icao]
+
+    def _correct_single_bit(self, frame: ModeSFrame, syndrome: int) -> ModeSFrame | None:
+        """Flip the one bit a single-bit error would explain, for a known aircraft only."""
+        bit = SINGLE_BIT_SYNDROMES.get(syndrome)
+        if bit is None:
+            return None
+        value = int(frame.hex, 16) ^ (1 << (111 - bit))
+        corrected = f"{value:028X}"
+        last_clean = self._clean_icaos.get(corrected[2:8])
+        if value >> 107 != 17 or last_clean is None:
+            return None
+        if abs(frame.sample_index - last_clean) > self._known_icao_samples:
+            return None
+        return replace(frame, hex=corrected)
 
     def _remember_position(
         self, icao: str, frame: ModeSFrame, cpr_format: str, altitude_source: str,
@@ -293,7 +323,8 @@ class ADSBDecoder:
         if previous is None or frame.sample_index >= previous.sample_index:
             messages[cpr_format] = frame
 
-    def _event(self, frame: ModeSFrame, event_type: str, fields: dict) -> DecodedEvent:
+    def _event(self, frame: ModeSFrame, event_type: str, fields: dict,
+               extra_metadata: dict | None = None) -> DecodedEvent:
         header = parse_header(frame)
         return DecodedEvent(
             icao=header.icao,
@@ -309,17 +340,37 @@ class ADSBDecoder:
                 "source": frame.source,
                 "sample_index": frame.sample_index,
                 "sample_rate_hz": self._sample_rate_hz,
+                **(extra_metadata or {}),
             },
         )
 
     def decode(self, frame: ModeSFrame) -> list[DecodedEvent]:
-        """Decode DF17 identification, airborne position and velocity components."""
+        """Decode DF17 identification, airborne position and velocity components.
+
+        A frame with a single-bit CRC error is repaired when its corrected ICAO
+        sent a clean frame within KNOWN_ICAO_SECONDS; such events carry
+        ``crc_corrected_bit`` and the original ``received_frame`` in metadata.
+        """
         header = parse_header(frame)
         if header.df != 17:
             return []
 
-        if crc24(bytes.fromhex(frame.hex)) != 0:
-            return []
+        extra_metadata = None
+        syndrome = crc24(bytes.fromhex(frame.hex))
+        if syndrome != 0:
+            corrected = self._correct_single_bit(frame, syndrome)
+            if corrected is None:
+                return []
+            extra_metadata = {
+                "crc_corrected_bit": SINGLE_BIT_SYNDROMES[syndrome],
+                "received_frame": frame.hex,
+            }
+            frame = corrected
+            header = parse_header(frame)
+        else:
+            # Only clean frames vouch for an aircraft; fixes cannot bootstrap fixes.
+            previous = self._clean_icaos.get(header.icao, frame.sample_index)
+            self._clean_icaos[header.icao] = max(previous, frame.sample_index)
 
         self._latest_sample_index = max(self._latest_sample_index, frame.sample_index)
         self._expire_cpr_frames()
@@ -329,7 +380,7 @@ class ADSBDecoder:
             if callsign is None:
                 return []
 
-            return [self._event(frame, "identification", {"callsign": callsign})]
+            return [self._event(frame, "identification", {"callsign": callsign}, extra_metadata)]
 
         if header.type_code in range(9, 19) or header.type_code in (20, 21, 22):
             fields = decode_airborne_position(frame)
@@ -346,12 +397,14 @@ class ADSBDecoder:
                     position_frame = max(pair, key=lambda item: item.sample_index)
                     fields = decode_airborne_position(position_frame)
                     fields["latitude"], fields["longitude"] = coordinates
-            return [self._event(position_frame, "airborne_position", fields)]
+            if position_frame is not frame:
+                extra_metadata = None  # the event describes the newer pair member
+            return [self._event(position_frame, "airborne_position", fields, extra_metadata)]
 
         if header.type_code == 19:
             fields = decode_velocity_components(frame)
             if fields is None:
                 return []
-            return [self._event(frame, "airborne_velocity", fields)]
+            return [self._event(frame, "airborne_velocity", fields, extra_metadata)]
 
         return []
