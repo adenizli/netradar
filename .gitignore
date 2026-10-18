@@ -4,3 +4,11 @@ __pycache__/
 fixtures/real_*.cu8
 fixtures/real_*.json
 .DS_Store
+
+# Desktop frontend
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/*.tsbuildinfo
+frontend/.env.local

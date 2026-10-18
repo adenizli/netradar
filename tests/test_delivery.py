@@ -99,8 +99,8 @@ class EventWireTest(unittest.TestCase):
 class BackendDeliveryTest(unittest.TestCase):
     def test_every_event_is_delivered_and_published_without_field_loss(self):
         published = []
-        pipeline = DecoderPipeline(publish=published.append)
-        expected_decoder = ADSBDecoder()
+        pipeline = DecoderPipeline(decoder=ADSBDecoder(capture_id="test-capture"), publish=published.append)
+        expected_decoder = ADSBDecoder(capture_id="test-capture")
         expected_count = 0
         for frame in supported_frames():
             expected_events = expected_decoder.decode(frame)

@@ -1,6 +1,7 @@
 """Ahmet + Ahmet Eren: implement Mode S / ADS-B protocol processing."""
 from dataclasses import dataclass
 import math
+from uuid import uuid4
 
 from netradar.contracts import ModeSFrame, DecodedEvent
 
@@ -241,10 +242,13 @@ def decode_cpr_pair(even: ModeSFrame, odd: ModeSFrame) -> tuple[float, float] | 
 class ADSBDecoder:
     """Decode one capture at a fixed sample rate; reset before a new capture."""
 
-    def __init__(self, *, sample_rate_hz: int = 2_000_000):
+    def __init__(self, *, sample_rate_hz: int = 2_000_000, capture_id: str | None = None):
         if sample_rate_hz <= 0:
             raise ValueError("Sample rate must be positive")
 
+        if capture_id is not None and (not isinstance(capture_id, str) or not capture_id):
+            raise ValueError("Capture identity must be a nonempty string")
+        self.capture_id = capture_id if capture_id is not None else uuid4().hex
         self._sample_rate_hz = sample_rate_hz
         self._max_pair_samples = 10 * sample_rate_hz
         self._latest_sample_index = 0
@@ -252,6 +256,7 @@ class ADSBDecoder:
 
     def reset(self) -> None:
         """Start a new capture without carrying over old CPR messages."""
+        self.capture_id = uuid4().hex
         self._cpr_frames.clear()
         self._latest_sample_index = 0
 
@@ -295,8 +300,9 @@ class ADSBDecoder:
             event_type=event_type,
             fields=fields,
             raw_frame=frame.hex,
-            observed_at_unix_ms=None,
+            observed_at_unix_ms=frame.observed_at_unix_ms,
             metadata={
+                "capture_id": self.capture_id,
                 "df": header.df,
                 "type_code": header.type_code,
                 "crc_valid": True,

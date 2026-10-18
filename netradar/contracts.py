@@ -28,6 +28,7 @@ class ModeSFrame:
     hex: str
     sample_index: int
     source: str = "rf"
+    observed_at_unix_ms: Optional[int] = None
 
     def __post_init__(self):
         if len(self.hex) != 28:
@@ -36,6 +37,10 @@ class ModeSFrame:
             bytes.fromhex(self.hex)
         except ValueError as exc:
             raise ValueError("Invalid hex") from exc
+        if self.observed_at_unix_ms is not None and (
+            type(self.observed_at_unix_ms) is not int or self.observed_at_unix_ms < 0
+        ):
+            raise ValueError("Observation time must be nonnegative integer milliseconds")
         if self.hex != self.hex.upper() or self.sample_index < 0:
             raise ValueError("Hex must be uppercase; sample index nonnegative")
 
@@ -50,6 +55,10 @@ class DecodedEvent:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
+        if self.observed_at_unix_ms is not None and (
+            type(self.observed_at_unix_ms) is not int or self.observed_at_unix_ms < 0
+        ):
+            raise ValueError("Observation time must be nonnegative integer milliseconds")
         if not isinstance(self.fields, dict) or not isinstance(self.metadata, dict):
             raise ValueError("Event fields and metadata must be objects")
         if len(self.icao) != 6 or self.icao != self.icao.upper():

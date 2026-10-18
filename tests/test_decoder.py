@@ -375,6 +375,7 @@ class IdentificationTest(unittest.TestCase):
                     raw_frame=example["hex"],
                     observed_at_unix_ms=None,
                     metadata={
+                        "capture_id": decoder.capture_id,
                         "df": 17, "type_code": example["type_code"], "crc_valid": True,
                         "source": "rf", "sample_index": 0, "sample_rate_hz": 2_000_000,
                     },
@@ -598,6 +599,7 @@ class AirbornePositionTest(unittest.TestCase):
                     raw_frame=raw,
                     observed_at_unix_ms=None,
                     metadata={
+                        "capture_id": decoder.capture_id,
                         "df": 17, "type_code": 11, "crc_valid": True,
                         "source": "rf", "sample_index": 0, "sample_rate_hz": 2_000_000,
                     },

@@ -38,6 +38,22 @@ can receive `event.to_json()` via `AircraftStore.apply_json()`. The optional cal
 receives every full update. HTTP/WebSocket hosting and live SDR acquisition are
 not started by this adapter.
 
+## Desktop radar interface
+
+The React + TypeScript + Leaflet interface is now implemented in `frontend/`.
+It includes a green receiver-centered radar map, directional aircraft markers,
+full decoder-event details, multiple radius zones and entry/exit notifications.
+It starts with clearly labeled fictional demo traffic, and a separate live
+adapter targets the planned HTTP/WS backend. The compact desktop layout keeps
+aircraft, map and zone controls together without a navigation rail or file uploader. See [frontend setup and integration](frontend/README.md).
+
+```bash
+cd frontend
+npm ci
+npm run dev
+# http://127.0.0.1:5173
+```
+
 ## 0. Quick start (Mac, Linux, Raspberry Pi; Python 3.10+)
 
 ```bash

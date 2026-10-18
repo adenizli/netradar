@@ -1,0 +1,288 @@
+/* Desktop readability: operational values stay legible at laptop resolutions. */
+.panel-heading h2 {
+  font-size: 13px;
+}
+.flight-identity strong {
+  font-size: 12px;
+}
+.flight-identity > span {
+  font-size: 9px;
+}
+.flight-values strong {
+  font-size: 11px;
+}
+.flight-values > span {
+  font-size: 9px;
+}
+.flight-values small {
+  font-size: 9px;
+}
+.search-field input {
+  font-size: 11px;
+}
+.list-column-labels {
+  font-size: 9px;
+}
+.panel-footnote {
+  font-size: 10px;
+}
+.zone-title {
+  font-size: 11px;
+}
+.zone-count {
+  font-size: 10px;
+}
+.zone-members button {
+  font-size: 10px;
+}
+.zone-members button > span:last-child {
+  font-size: 9px;
+}
+.zone-radius small {
+  font-size: 9px;
+}
+.add-zone-button {
+  font-size: 11px;
+}
+.section-heading h3 {
+  font-size: 11px;
+}
+.activity-empty > p {
+  font-size: 10px;
+}
+.activity-empty > p > span {
+  font-size: 9px;
+}
+.activity-item strong,
+.activity-item strong small {
+  font-size: 9px;
+}
+.activity-item > span > span {
+  font-size: 9px;
+}
+.label-callsign,
+.radar-overlay .label-callsign {
+  font-size: 10px;
+}
+.label-detail {
+  font-size: 8px;
+}
+.detail-section dl > div,
+.detail-section dd {
+  font-size: 10px;
+}
+.detail-section h3 {
+  font-size: 12px;
+}
+.flight-metric > span {
+  font-size: 10px;
+}
+.flight-metric > strong {
+  font-size: 19px;
+}
+.message-intro p {
+  font-size: 11px;
+}
+.event-card summary {
+  font-size: 10px;
+}
+.raw-frame {
+  font-size: 10px;
+}
+.metric-grid {
+  margin: 13px;
+}
+.helper {
+  font-size: 11px;
+}
+.map-heading {
+  font-size: 9px;
+}
+.map-heading .mono {
+  font-size: 8px;
+}
+.map-coordinate {
+  font-size: 8px;
+}
+.map-legend {
+  font-size: 8px;
+}
+.map-bottom {
+  bottom: 25px;
+}
+.leaflet-control-attribution {
+  font-size: 9px !important;
+  line-height: 14px !important;
+}
+.trail-toggle,
+.pause-button {
+  font-size: 11px;
+}
+.zone-composer label,
+.radius-input {
+  font-size: 11px;
+}
+.zone-composer label > input {
+  font-size: 11px;
+}
+.zone-composer .helper {
+  font-size: 10px;
+}
+.zone-composer .primary-button {
+  font-size: 11px;
+}
+.zone-card {
+  padding: 12px;
+}
+.zone-count > span:last-child:not(.tiny-dot) {
+  font-size: 9px;
+}
+.activity-section {
+  min-height: 90px;
+  max-height: 25%;
+}
+@media (min-width: 1700px) {
+  .radar-workspace {
+    grid-template-columns: 324px minmax(0, 1fr) 288px;
+  }
+  .workspace {
+    padding: 24px 32px;
+  }
+  .app-header {
+    padding: 0 32px;
+  }
+  .panel-heading {
+    padding: 0 20px;
+  }
+  .flight-row {
+    min-height: 73px;
+  }
+  .zone-card {
+    padding: 14px;
+  }
+  .map-topbar {
+    padding: 23px;
+  }
+}
+@media (max-width: 1280px) {
+  .workspace {
+    padding: 18px;
+  }
+  .app-header {
+    padding: 0 18px;
+  }
+  .radar-workspace {
+    grid-template-columns: 280px minmax(0, 1fr) 242px;
+  }
+  .header-right {
+    gap: 17px;
+  }
+  .panel-heading {
+    padding: 0 13px;
+  }
+  .panel-heading > .eyebrow {
+    font-size: 7px;
+  }
+  .flight-row {
+    gap: 7px;
+  }
+  .flight-list {
+    padding-left: 5px;
+  }
+  .row-plane {
+    width: 25px;
+  }
+  .flight-values strong {
+    font-size: 10px;
+  }
+  .zone-scroll {
+    padding: 0 10px;
+  }
+  .zone-members button > span:last-child {
+    font-size: 8px;
+  }
+  .activity-section {
+    padding-left: 11px;
+    padding-right: 11px;
+  }
+  .map-topbar {
+    padding: 18px 13px;
+  }
+  .map-heading {
+    font-size: 8px;
+    letter-spacing: 0.5px;
+  }
+  .map-heading-divider {
+    display: none;
+  }
+  .map-heading .mono {
+    display: none;
+  }
+  .map-legend {
+    display: none;
+  }
+  .flight-metric {
+    padding: 12px 9px;
+  }
+  .playback-tools {
+    gap: 13px;
+  }
+  .traffic-summary > div {
+    padding: 0 14px;
+  }
+}
+@media (max-height: 820px) {
+  .workspace {
+    padding-top: 16px;
+    padding-bottom: 16px;
+  }
+  .workspace-heading {
+    margin-bottom: 13px;
+  }
+  h1 {
+    font-size: 24px;
+    margin-bottom: 5px;
+  }
+  .radar-toolbar {
+    margin-bottom: 11px;
+  }
+  .panel-heading {
+    height: 49px;
+  }
+  .zone-add {
+    padding-top: 11px;
+    padding-bottom: 11px;
+  }
+  .activity-section {
+    min-height: 80px;
+    max-height: 22%;
+    padding-top: 11px;
+  }
+  .activity-empty {
+    padding-top: 4px;
+    padding-bottom: 12px;
+  }
+  .selected-flight {
+    padding-top: 13px;
+    padding-bottom: 12px;
+  }
+  .selected-flight h2 {
+    font-size: 22px;
+  }
+  .flight-symbol {
+    top: 14px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *:before,
+  *:after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+  .sweep-beam {
+    opacity: 0.3;
+  }
+}

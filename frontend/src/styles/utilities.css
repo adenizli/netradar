@@ -1,0 +1,229 @@
+.connection-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #d4c48d;
+  background: #40382233;
+  border: 1px solid #665a34;
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-size: 10px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+.connection-banner button {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: #e8dba7;
+}
+.connection-banner.error {
+  color: #efb7a5;
+  border-color: #875d42;
+}
+.toast-stack {
+  position: absolute;
+  right: 12px;
+  top: 66px;
+  z-index: 2000;
+  width: min(310px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 14px 12px;
+  background: #1f3825f5;
+  border: 1px solid #739967;
+  border-radius: 7px;
+  box-shadow: 0 7px 25px #0005;
+  pointer-events: auto;
+  animation: toast-in 0.25s ease;
+}
+.toast.exit {
+  border-color: #95834f;
+  background: #303423f5;
+}
+.toast-icon {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #a5efb71a;
+  color: #c9eeaf;
+  border-radius: 5px;
+}
+.toast.exit .toast-icon {
+  color: #e8d49e;
+  background: #e8d49e1a;
+}
+.toast-content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+  text-align: left;
+  padding: 0;
+}
+.toast-content strong {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #e1efd6;
+  overflow-wrap: anywhere;
+}
+.toast-content span {
+  font-size: 9px;
+  color: #afc0a5;
+  line-height: 1.6;
+}
+.toast > .icon-button {
+  width: 19px;
+  height: 22px;
+}
+.settings-dialog {
+  color: #e1edda;
+  background: #14231a;
+  border: 1px solid #4d6d4e;
+  border-radius: 12px;
+  padding: 0;
+  width: 480px;
+  box-shadow: 0 20px 100px #000a;
+  max-height: 90vh;
+}
+.settings-dialog::backdrop {
+  background: #020d08b8;
+  backdrop-filter: blur(5px);
+}
+.settings-dialog form {
+  padding: 24px 28px;
+}
+.settings-dialog header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.settings-dialog header > .eyebrow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 9px;
+}
+.settings-dialog h2 {
+  font-size: 23px;
+  letter-spacing: -0.5px;
+  font-weight: 600;
+  margin: 14px 0 8px;
+}
+.settings-dialog p {
+  font-size: 11px;
+  line-height: 1.8;
+  color: #a3b99f;
+  margin: 0 0 23px;
+}
+.settings-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 10px;
+  color: #b6c8b0;
+  margin-bottom: 17px;
+}
+.settings-dialog input {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #d6e8d0;
+  width: 100%;
+  background: #0e1c13;
+  border-color: #405a40;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.endpoint-note {
+  padding: 13px 15px;
+  background: #0e1d13;
+  border: 1px solid #2d4731;
+  border-radius: 5px;
+}
+.endpoint-note code {
+  display: block;
+  color: #afcea8;
+  font-size: 10px;
+  line-height: 1.9;
+}
+.endpoint-note p {
+  font-size: 10px;
+  margin: 10px 0 0;
+  line-height: 1.8;
+  color: #87a48a;
+}
+.settings-dialog footer {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 25px;
+}
+.settings-dialog footer button {
+  font-size: 11px;
+}
+.settings-dialog .form-error {
+  color: #f1b19a;
+  margin: 14px 0 0;
+  font-size: 11px;
+}
+.fatal-error {
+  padding: 100px;
+  color: #c8e5bd;
+}
+::-webkit-scrollbar {
+  width: 4px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #3f5b43;
+  border-radius: 9px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #708c6c;
+}
+@keyframes scan {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ripple {
+  0% {
+    transform: scale(0.02);
+    opacity: 0.22;
+  }
+  80% {
+    opacity: 0.06;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+@keyframes toast-in {
+  from {
+    transform: translateX(15px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}

@@ -45,7 +45,8 @@ Chunking: the preamble takes 16 complex samples and a long payload 224 samples,
 ModeSFrame(
     hex="8D40621D58C382D690C8AC2863A7",
     sample_index=10000,    # preamble begins here
-    source="rf"            # or "replay", "synthetic"
+    source="rf",           # or "replay", "synthetic"
+    observed_at_unix_ms=None, # optional measured time; never invent for raw replay
 )
 ```
 
@@ -97,8 +98,10 @@ Use `event.to_dict()` or `event.to_json()` for transport and
 boundary rejects non-finite numbers. Unknown schema versions are rejected rather
 than silently reinterpreted. `raw_frame` remains the complete 112-bit message.
 
-`metadata` carries DF, Type Code, CRC result, source label, sample index and actual
-sample rate. It refers to the same frame as `raw_frame` and its measurements. For
+`metadata` carries DF, Type Code, CRC result, source label, sample index, actual
+sample rate and `capture_id`. A decoder instance assigns a capture identity;
+`reset()` assigns a new one. Sample indices may only be ordered within the same
+capture, source and sample rate. It refers to the same frame as `raw_frame` and its measurements. For
 a resolved CPR pair that is the newer message, even if its counterpart arrived
 late. Capture-relative sample indices do not create an absolute observation time.
 
@@ -135,7 +138,9 @@ The variable names above stand for objects, not string literals:
   metadata field. Every accepted event is delivered, even if the aircraft state
   already contains the same measurement.
 - `data`: the complete current aircraft state, with flat measurement fields for UI
-  convenience. Known measurements survive unrelated events with null fields.
+  convenience. Known measurements survive unrelated events with null fields. Dated older
+  measurements cannot replace newer values; coordinates additionally require
+  evidence of a strictly newer fix, not merely a newer unrelated aircraft event.
   Real zero values update the state. A zero speed clears its undefined track.
   Related value/source pairs (airspeed/type, heading/reference, vertical rate/source)
   update together. Latitude and longitude update as a pair.
@@ -164,3 +169,36 @@ MVP: acquisition, DSP, decoder and backend in one Python process or local integr
 runner. Frontend is accessed over LAN. Do not transfer continuous raw IQ to browsers:
 2 MS/s x 2 bytes/sample = 4 MB/s. Use decoded events for ordinary UI;
 optional short, on-demand IQ windows are for debugging only.
+
+## F. Desktop frontend adapter
+
+The implemented frontend consumes the planned HTTP array snapshot and complete
+WebSocket `aircraft_update` envelopes above. Its other mode is explicitly fictional
+demo traffic; file upload/replay is not part of the operator interface. The Python
+JSONL delivery adapter remains available to backend developers. The UI does not
+reduce or change the v1.1 schema: full latest events and unknown fields are retained.
+
+UI receipt timestamps and stale-contact expiration remain separate from measured
+`last_seen`; a timestamp-free replay is never presented as a measured live capture.
+See [frontend integration, ordering requirements and lifecycle limits](../frontend/README.md).
+
+## G. Position ordering and age (additive v1.1 fields)
+
+Aircraft snapshots/updates now include `position_event`, `position_revision`,
+`position_observed_at_unix_ms`, `position_received_at_unix_ms` and `position_age_ms`.
+They describe the last accepted resolved coordinate pair separately from the latest
+aircraft message. Observation time can be null; receipt time is never substituted
+for observation time. Age is recalculated at serialization, including snapshots.
+
+`latest_events` remains latest-received history. Rejected old fixes are still
+delivered losslessly in the envelope's `event`, while `position_event` retains the
+message supporting the accepted map position. Equal/repeated fixes do not reset
+position age. A strictly newer fix can refresh age even at unchanged coordinates.
+Without absolute time or comparable capture indices, a fix cannot replace the
+accepted coordinates; start a new store for an independent undated capture.
+
+The frontend adds a local `position_status` (`fresh`, `stale`, `unknown`), using a
+30-second application threshold and a monotonic browser clock. Only fresh positions
+count in zones; losing freshness/recovering after an unknown gap is not a measured
+physical crossing. Legacy snapshots without evidence of age remain unknown.
+See [the full Turkish walkthrough and regression cases](POSITION_FRESHNESS.md).

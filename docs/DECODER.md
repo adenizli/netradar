@@ -86,7 +86,10 @@ Call `reset()` before replaying another capture. CPR age is measured using sampl
 indices, not processing speed. `get_cpr_pair(icao)` selects barometric messages;
 use `get_cpr_pair(icao, altitude_source="gnss")` for geometric messages.
 Raw sample indices do not provide absolute time, so `observed_at_unix_ms` remains
-`None` unless a future acquisition interface supplies a measured timestamp.
+`None` unless the caller supplies a measured timestamp through
+`ModeSFrame.observed_at_unix_ms`. The decoder forwards it from the selected frame.
+Events also carry a per-capture `capture_id`, changed on `reset()`, so downstream
+position ordering never compares indices from independent recordings.
 
 Run `python3 -m unittest discover -s tests -v` from the repository root. Tests use
 published examples and explicitly synthetic frames. During development, every

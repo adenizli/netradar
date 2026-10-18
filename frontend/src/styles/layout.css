@@ -1,0 +1,230 @@
+.app-shell {
+  height: 100dvh;
+  min-height: 690px;
+  display: grid;
+  grid-template-rows: 64px minmax(0, 1fr);
+  overflow: hidden;
+}
+.app-header {
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: #101c15;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--bright);
+}
+.brand > span {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  line-height: 1.12;
+  color: #eef4e8;
+}
+.brand > span > span {
+  font-weight: 500;
+  color: var(--bright);
+}
+.brand small {
+  display: block;
+  font-size: 8px;
+  letter-spacing: 2.8px;
+  font-weight: 500;
+  color: #90a891;
+  margin-top: 5px;
+}
+.header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+.connection-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #bde5b7;
+  font-size: 11px;
+}
+.connection-pill.disconnected {
+  color: #e9c882;
+}
+.disconnected .live-dot {
+  background: #e9c882;
+  box-shadow: none;
+}
+.clock {
+  padding-left: 20px;
+  border-left: 1px solid var(--border);
+}
+.clock strong {
+  font: 400 12px var(--mono);
+  letter-spacing: 0.3px;
+}
+.clock small {
+  font-size: 10px;
+  color: var(--muted);
+}
+.header-settings {
+  width: 34px;
+  height: 34px;
+}
+.workspace {
+  padding: 21px 24px 20px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.workspace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 16px;
+}
+h1 {
+  font-size: 25px;
+  font-weight: 600;
+  letter-spacing: -0.8px;
+  margin: 0 0 7px;
+  line-height: 1.25;
+}
+.workspace-heading p {
+  margin: 0;
+  color: #a6b7a7;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.workspace-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.source-toggle {
+  display: flex;
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid #304733;
+  border-radius: 6px;
+  background: #101e15;
+}
+.source-toggle button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 7px 15px;
+  border-radius: 3px;
+  color: #9eaf9f;
+}
+.source-toggle button.active {
+  background: #a9dca9;
+  color: #17301b;
+}
+.source-toggle .tiny-dot {
+  background: currentColor;
+}
+.radar-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 13px;
+  flex-shrink: 0;
+}
+.traffic-summary {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+}
+.traffic-summary > div {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 0 17px;
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+}
+.traffic-summary > div:first-child {
+  padding-left: 0;
+}
+.traffic-summary > div:last-child {
+  padding-right: 0;
+  border-right: 0;
+}
+.traffic-summary strong {
+  font: 500 16px var(--mono);
+  color: #d5ecd2;
+}
+.traffic-summary span {
+  font-size: 11px;
+  color: #9eb39f;
+}
+.playback-tools {
+  display: flex;
+  align-items: center;
+  gap: 17px;
+  flex-shrink: 0;
+}
+.pause-button {
+  font-size: 11px;
+}
+.speed-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.speed-select select {
+  font: 10px var(--mono);
+  appearance: none;
+  padding: 5px 22px 5px 8px;
+  border-color: #2b422f;
+  background: transparent;
+  cursor: pointer;
+}
+.speed-select > svg {
+  position: absolute;
+  right: 5px;
+  pointer-events: none;
+  color: var(--muted);
+}
+.trail-toggle {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: #9db19f;
+  font-size: 11px;
+}
+.trail-toggle svg {
+  padding: 1px;
+  width: 14px;
+  height: 14px;
+  border: 1px solid #48604b;
+  border-radius: 3px;
+  stroke: transparent;
+}
+.trail-toggle.active svg {
+  background: #9dcba426;
+  border-color: #83b18c;
+  color: #b5f5b8;
+  stroke: currentColor;
+}
+.radar-workspace {
+  display: grid;
+  grid-template-columns: 290px minmax(0, 1fr) 262px;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #102018;
+}
