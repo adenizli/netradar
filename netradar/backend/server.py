@@ -28,8 +28,8 @@ def create_app(*, service: TrafficService | None = None,
             tuple(o.strip() for o in configured.split(",") if o.strip())
             if configured is not None else DEFAULT_ORIGINS
         )
-    if "*" in allowed_origins:
-        raise ValueError("Configure explicit frontend origins")
+    # Demo only: "*" lets any web page read the feed and POST events (no auth).
+    allow_any_origin = "*" in allowed_origins
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -41,7 +41,7 @@ def create_app(*, service: TrafficService | None = None,
 
     app = FastAPI(title="NetRadar live backend", version="0.1.0", lifespan=lifespan)
     app.add_middleware(
-        CORSMiddleware, allow_origins=list(allowed_origins),
+        CORSMiddleware, allow_origins=["*"] if allow_any_origin else list(allowed_origins),
         allow_methods=["GET", "POST"], allow_headers=["Content-Type"],
     )
 
@@ -65,7 +65,7 @@ def create_app(*, service: TrafficService | None = None,
     @app.post("/api/events")
     async def ingest(payload: EventInput, request: Request, response: Response):
         origin = request.headers.get("origin")
-        if origin is not None and origin not in allowed_origins:
+        if origin is not None and not allow_any_origin and origin not in allowed_origins:
             raise HTTPException(403, "Origin is not allowed")
         try:
             event = payload.to_event()
@@ -77,7 +77,7 @@ def create_app(*, service: TrafficService | None = None,
     @app.websocket("/ws/aircraft")
     async def aircraft_stream(websocket: WebSocket):
         origin = websocket.headers.get("origin")
-        if origin is not None and origin not in allowed_origins:
+        if origin is not None and not allow_any_origin and origin not in allowed_origins:
             await websocket.close(code=1008)
             return
         traffic = websocket.app.state.traffic

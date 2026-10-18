@@ -163,8 +163,11 @@ class ServerTest(unittest.TestCase):
         with TestClient(create_app(allowed_origins=())) as client:
             response = client.get("/api/aircraft", headers={"Origin": "http://127.0.0.1:5173"})
             self.assertNotIn("access-control-allow-origin", response.headers)
-        with self.assertRaises(ValueError):
-            create_app(allowed_origins=("*",))
+        with TestClient(create_app(allowed_origins=("*",))) as client:
+            response = client.get("/api/aircraft", headers={"Origin": "http://anything.example"})
+            self.assertEqual(response.headers["access-control-allow-origin"], "*")
+            with client.websocket_connect("/ws/aircraft", headers={"Origin": "http://anything.example"}):
+                pass
 
 
 class BlockedSocket:
