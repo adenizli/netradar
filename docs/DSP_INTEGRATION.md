@@ -21,7 +21,7 @@ CU8 dosyası → replay_cu8 → IqChunk → detect_frames → ModeSFrame
                                               Store → WebSocket → UI
 ```
 
-FastAPI ve IQ üreticisi bu kullanımda ayrı süreçlerdir. Dosya okuma/DSP işlemi,
+FastAPI ve IQ üreticisi bu kullanımda ayrı süreçlerdir. Alıcı/dosya okuma ve DSP işlemi,
 sunucunun event loop'unu meşgul etmez. Mevcut `--fixture` ve `--input` yolları da
 korundu; yeni `--iq` bunlardan bağımsızdır.
 
@@ -131,10 +131,58 @@ beş uçak özeti, iki çözülmüş CPR konumu; ölçüm zamanı uydurulmadı.
 Bu temel DSP **2 MS/s, 1090 MHz, CU8 ve 112-bit DF17** ile sınırlıdır. Farklı
 örnekleme hızları sessizce yorumlanmaz; resampling yoktur. Preamble eşikleri
 deneyseldir; çakışma, zamanlama/frekans kayması ve zayıf gerçek RF için gelişmiş
-iyileştirme yapılmadı. `stream_rtlsdr()` hâlâ donanım adaptörü olarak eksiktir;
-canlı anten alımı doğrulanmış değildir. DSP mevcut `Iterable[IqChunk]` sözleşmesi
-sayesinde bu kaynak hazır olduğunda aynı decoder hattını kullanabilir.
+iyileştirme yapılmadı. `stream_rtlsdr()` artık bağlıdır; dongle ve Raspberry Pi
+üzerindeki gerçek anten alımı bu bilgisayarda doğrulanmış değildir.
 
 Repodaki kaynağı belirsiz 20 MB `adsb.iq` dosyası da yerel olarak tarandı; mevcut
 eşiklerle DF17 adayı/CRC-geçerli olay çıkmadı. Bu sonuç dosyada kesinlikle uçak
 olmadığını veya gerçek RF'de başarı elde edildiğini kanıtlamaz. Dosya değiştirilmedi.
+
+## 8. Canlı RTL-SDR kaynağı
+
+Main'deki Yasir acquisition kodu ve PPM modülü feature branch'e birleştirildi.
+Tek çakışma `receiver.py` içindeydi; canlı kaynak, sidecar bilgileri ve pipeline'ın
+katı kesik-dosya kontrolü birlikte korundu. DSP artık `netradar/dsp/ppm.py` içindeki
+PPM çözümlemesini kullanır; CRC kontrolü yine decoder'dadır.
+
+Raspberry Pi üzerinde `rtl-sdr` paketi kurulu, cihaz erişilebilir ve backend
+çalışırken:
+
+```bash
+.venv/bin/python -m netradar.pipeline --rtl-sdr \
+  --gain-db 35 --backend-url http://127.0.0.1:8000
+```
+
+Beş saniyelik sınırlı kontrol için `--max-samples 10000000` eklenebilir.
+Bu seçenek yoksa akış Ctrl+C'ye kadar sürer; alıcı kendiliğinden sonlanırsa hata
+raporlanır. Tuner seçenekleri: `--gain-db auto`, `--ppm -3`, `--device-index 1`.
+`--rtl-sdr-command` farklı bir executable yolu veya donanımsız test stand-in'i
+seçebilir. Varsayılan kaynak etiketi canlı için `rf`, kayıt için `replay` olur;
+sentetik test akışında açıkça `--source synthetic` kullanılır.
+
+Alıcı süreci arka plan thread'iyle sürekli okunur. Varsayılan 64 parçalık kuyruk
+dolarsa yeni parça düşer; `start_sample_index` atlanan örnekleri korur. DSP bu
+boşlukta son 239 örneğini siler. Varsayılan pipeline parçası 8192 örnektir;
+`--chunk-samples` ve `--queue-max-chunks` ile ayarlanabilir. `received`, `emitted`,
+`dropped` ve alt süreç çıkış kodu stderr'e yazılır. stdout JSONL'e ayrılmıştır.
+
+`--backend-url` tam decoder olaylarını doğrudan FastAPI'ye gönderir; ayrıca
+`forward` pipe'ı gerekmez. HTTP hatası, cihaz açılış hatası ve Ctrl+C alıcı sürecini
+kapatır, thread'leri temizler ve dongle'ı bırakır. HTTP üreticisi otomatik retry
+yapmaz. Yeni, mutlak saatsiz bir producer oturumu başlatırken backend de yeniden
+başlatılmalıdır; farklı capture_id'lerin örnek indeksleri kıyaslanamaz.
+
+Kayıt dosyasındaki sidecar örnekleme hızı/frekansı korunur; desteklenmeyen bir hız
+2 MS/s varsayılarak işlenmez. Bilerek override etmek için `--sample-rate-hz` ve
+`--center-frequency-hz` verilebilir. Pipeline `replay_cu8(strict=True)` kullanır;
+`tools/iq_health.py` varsayılan uyarı/kırpma davranışıyla analiz yapabilir.
+
+Arayüz farklı bilgisayardaysa backend'i Pi'nin LAN adresine bağlayıp arayüzde
+`http://<PI_LAN_IP>:8000` kullanın. İzinli frontend origin'ini
+`NETRADAR_ALLOWED_ORIGINS` ile ayarlayın; ayrıntılar [backend belgesinde](LIVE_BACKEND.md).
+
+`tests/test_acquisition.py` yeni acquisition testlerini, `tests/test_live_pipeline.py`
+ise canlı komut yolunu kapsar. Fake `rtl_sdr` alt süreci gerçek CU8 fixture baytlarını
+stdout'a yazar; DSP ve HTTP teslimi üretim koduyla çalışır. İptal, dolu kuyruk,
+alıcı açılış hatası ve backend hatası test edilir. Bu donanımsız entegrasyon testi,
+gerçek RF başarısı olarak sunulmaz.

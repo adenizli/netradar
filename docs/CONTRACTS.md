@@ -38,8 +38,14 @@ Chunking: the preamble takes 16 complex samples and a long payload 224 samples,
 power samples, scans complete starts once and handles frames crossing one or
 many chunk boundaries. Gaps discard the tail, while overlap/rewind is rejected.
 Input currently requires 2 MS/s at 1090 MHz; it does not silently resample.
-`replay_cu8()` implements chunked file acquisition; `stream_rtlsdr()` remains
-the live hardware adapter stub. See [DSP integration](DSP_INTEGRATION.md).
+`replay_cu8()` implements file acquisition, including sidecar sample rate and
+frequency; the decoder pipeline uses `strict=True` to reject a truncated I/Q
+pair. Its default warning/drop behavior remains available to analysis tools.
+`stream_rtlsdr()` starts the actual `rtl_sdr` process, drains stdout using a
+bounded queue and reports dropped samples through `StreamStats`. Sample indices
+jump over drops, allowing DSP to discard its partial frame at a discontinuity.
+`--rtl-sdr --backend-url ...` connects this source to the same decoder and live
+transport. See [DSP integration](DSP_INTEGRATION.md).
 
 ## B. DSP -> Decoder
 

@@ -64,7 +64,7 @@ class ReplayTest(unittest.TestCase):
             path = Path(directory) / "capture.cu8"
             path.write_bytes(b"\x7f" * 9)
             with self.assertRaisesRegex(ValueError, "unpaired"):
-                next(replay_cu8(path, chunk_samples=2))
+                next(replay_cu8(path, chunk_samples=2, strict=True))
 
 
 @unittest.skipUnless(HAS_DSP, "Install requirements-dsp.txt for IQ/DSP tests")

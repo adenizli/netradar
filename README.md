@@ -10,7 +10,8 @@ The decoder implementation now covers DF17 identification, airborne position
 [decoder coverage and field meanings](docs/DECODER.md) for supported encodings,
 integration details and remaining scope. CU8 file replay, a basic streaming 2 MS/s
 DSP detector, aircraft state/delivery, FastAPI transport and desktop UI are now
-implemented. Live RTL-SDR acquisition and real-air validation remain separate work.
+implemented. Live RTL-SDR acquisition is connected to the same pipeline;
+on-device real-air validation still requires the Raspberry Pi and dongle.
 
 ## Decoder to backend delivery
 
@@ -82,6 +83,23 @@ publishes them through HTTP/WS. The detector preserves frames crossing chunk
 boundaries and currently supports exactly 2 MS/s, 1090 MHz CU8 input. Raw replay
 does not acquire an invented observation timestamp. See the
 [DSP integration walkthrough](docs/DSP_INTEGRATION.md) for details and limits.
+
+## Live RTL-SDR through DSP to FastAPI
+
+With `rtl-sdr` installed and the dongle available, start the backend as above,
+then run one live producer from the repository root:
+
+```bash
+.venv/bin/python -m netradar.pipeline --rtl-sdr \
+  --gain-db 35 --backend-url http://127.0.0.1:8000
+```
+
+This connects `rtl_sdr` -> bounded IQ acquisition -> streaming DSP -> CRC/decoder
+-> FastAPI -> WebSocket. Use `--gain-db auto`, `--ppm`, or `--device-index` as
+needed; `--max-samples 10000000` limits a hardware check to five seconds at 2 MS/s.
+Ctrl+C closes the producer and releases the dongle. Errors and received/emitted/
+dropped sample counters go to stderr. Without `--backend-url`, stdout stays JSONL.
+See [live setup, replay metadata and failure behavior](docs/DSP_INTEGRATION.md).
 
 ## Desktop radar interface
 

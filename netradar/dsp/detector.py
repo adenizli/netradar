@@ -5,18 +5,7 @@ import numpy as np
 
 from netradar.contracts import IqChunk, ModeSFrame
 from netradar.dsp.preamble import FRAME_SAMPLES, SAMPLE_RATE, detect_preambles
-
-
-def demodulate_frame(power: np.ndarray, start: int) -> bytes | None:
-    """Read 112 PPM bits after the 16-sample preamble, MSB first."""
-    if start < 0 or power.ndim != 1 or start + FRAME_SAMPLES > len(power):
-        return None
-    data = power[start + 16:start + FRAME_SAMPLES]
-    first, second = data[0::2], data[1::2]
-    # A tied half-bit has no defensible value; do not invent a zero.
-    if not np.isfinite(data).all() or np.any(first == second):
-        return None
-    return np.packbits(first > second, bitorder="big").tobytes()
+from netradar.dsp.ppm import demodulate_frame
 
 
 def detect_frames(chunks: Iterable[IqChunk], *, source: str = "rf",

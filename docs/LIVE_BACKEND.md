@@ -78,6 +78,20 @@ Bu farklı bir test kaydıdır; mutlak saat içermeyen bağımsız kayıtları a
 birbirinin devamı saymamak için kayıtlar arasında backend'i yeniden başlatın.
 Ayrıntılar: [DSP bağlantısı](DSP_INTEGRATION.md).
 
+Canlı RTL-SDR kaynağı da aynı hatta bağlıdır. Backend çalışırken Raspberry Pi'de:
+
+```bash
+.venv/bin/python -m netradar.pipeline --rtl-sdr \
+  --gain-db 35 --backend-url http://127.0.0.1:8000
+```
+
+Bu komut `stream_rtlsdr → detect_frames → decoder → POST /api/events` yolunu
+çalıştırır. `--backend-url` verildiğinde ayrıca forward pipe'ı gerekmez.
+`--max-samples 10000000` ile beş saniyelik test yapılabilir. Üretici Ctrl+C veya
+HTTP/cihaz hatasında dongle sürecini temizler; örnek sayaçları stderr'e yazılır.
+Alıcı kaynağını yeniden başlatırken backend'i de yeniden başlatın; tarihsiz
+bağımsız capture oturumları aynı örnek saati sayılmaz.
+
 DSP'nin üreteceği gerçek `ModeSFrame` JSONL için:
 
 ```bash

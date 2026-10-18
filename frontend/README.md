@@ -163,7 +163,8 @@ src/
 
 Tested in the desktop browser at 1280×720 and 1440×900 (with a 1920×1080 layout check), including plane selection,
 aircraft details, zone creation/removal and unavailable live server state.
-The simplified layout is also checked for panel separation at 1280×720. A working SDR/production backend is still needed to verify the
+The simplified layout is also checked for panel separation at 1280×720. The live
+RTL-SDR producer is connected to the FastAPI backend; real hardware is still needed to verify the
 full RF → DSP → decoder → live UI chain.
 
 Position-age behavior, clock rules and regression examples are explained in
