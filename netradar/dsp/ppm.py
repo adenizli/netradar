@@ -37,13 +37,20 @@ def demodulate_frame(
 _DF_OFFSETS = 16 + np.arange(10)
 _FRAME_OFFSETS = 16 + np.arange(224)
 
+# Weak real signals are coarsely quantized, so a genuine frame can have one or
+# two half-bit pairs of exactly equal power. On a 10 s indoor-antenna capture,
+# every recoverable frame had <= 2 ties while noise candidates mostly had 10+.
+MAX_TIED_BITS = 2
+
 
 def demodulate_df17_frames(power: np.ndarray, starts) -> list[tuple[int, bytes]]:
-    """Vectorized demodulate_frame over many candidate starts, keeping only DF17.
+    """Vectorized demodulation of many candidate starts, keeping only DF17.
 
-    Accepts exactly the starts for which demodulate_frame returns a frame whose
-    downlink format is 17, in the same order. Noise candidates are first
-    rejected on the 5 DF bits alone, so only plausible ones are fully sliced.
+    Same as demodulate_frame, except that up to MAX_TIED_BITS tied half-bit
+    pairs are read as 0 instead of rejecting the frame; the decoder's CRC
+    decides whether the guess was right. Order follows ``starts``. Noise
+    candidates are first rejected on the 5 DF bits alone, so only plausible
+    ones are fully sliced.
     """
     starts = np.asarray(starts, dtype=np.intp)
     starts = starts[(starts >= 0) & (starts + 240 <= len(power))]
@@ -51,7 +58,7 @@ def demodulate_df17_frames(power: np.ndarray, starts) -> list[tuple[int, bytes]]
         return []
     head = power[starts[:, None] + _DF_OFFSETS]
     df_bits = head[:, 0::2] > head[:, 1::2]
-    # DF 17 = 10001; ties fail the full check below anyway.
+    # DF 17 = 10001, with ties read as 0 exactly like the full check below.
     starts = starts[df_bits[:, 0] & ~df_bits[:, 1] & ~df_bits[:, 2] & ~df_bits[:, 3] & df_bits[:, 4]]
     if not starts.size:
         return []
@@ -60,7 +67,7 @@ def demodulate_df17_frames(power: np.ndarray, starts) -> list[tuple[int, bytes]]
     frames = np.packbits(first_half > second_half, axis=1, bitorder="big")
     ok = (
         np.isfinite(data).all(axis=1)
-        & ~(first_half == second_half).any(axis=1)
+        & ((first_half == second_half).sum(axis=1) <= MAX_TIED_BITS)
         & (frames[:, 0] >> 3 == 17)
     )
     return [(int(start), frame.tobytes()) for start, frame in zip(starts[ok], frames[ok])]

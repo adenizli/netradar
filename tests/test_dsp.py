@@ -148,6 +148,20 @@ class DSPTest(unittest.TestCase):
         self.assertIsNone(demodulate_frame(power[:-1], 0))
         self.assertIsNone(demodulate_frame(power, -1))
 
+    def test_up_to_two_tied_half_bits_are_read_as_zero(self):
+        zero_bits = [b for b, v in enumerate(f"{int(HEX, 16):0112b}") if v == "0" and b > 4]
+
+        def tied(count):
+            raw = bytearray(encode_frame())
+            for bit in zero_bits[:count]:
+                index = 16 + 2 * bit  # copy the late pulse into the early half
+                raw[index * 2:index * 2 + 2] = b"\xde\xb5"
+            return [f.hex for f in detect_frames([IqChunk(bytes(raw), 0)])]
+
+        self.assertEqual(tied(1), [HEX])
+        self.assertEqual(tied(2), [HEX])
+        self.assertEqual(tied(3), [])
+
     def test_dsp_passes_bad_crc_candidate_but_decoder_drops_it(self):
         bad = HEX[:-1] + "9"
         frames = list(detect_frames([IqChunk(encode_frame(bad), 0)]))
