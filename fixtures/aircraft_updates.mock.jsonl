@@ -1,0 +1,3 @@
+{"type": "aircraft_update", "data": {"icao": "D00001", "callsign": "DEMO101", "latitude": 41.135, "longitude": 29.201, "altitude_ft": 34000, "speed_knots": 430, "heading_deg": 245, "last_seen": "2026-10-18T12:00:00Z"}}
+{"type": "aircraft_update", "data": {"icao": "D00002", "callsign": "DEMO202", "latitude": 40.965, "longitude": 28.722, "altitude_ft": 27000, "speed_knots": 385, "heading_deg": 70, "last_seen": "2026-10-18T12:00:01Z"}}
+{"type": "aircraft_update", "data": {"icao": "D00003", "callsign": "DEMO303", "latitude": 41.265, "longitude": 29.488, "altitude_ft": 14000, "speed_knots": 260, "heading_deg": 185, "last_seen": "2026-10-18T12:00:02Z"}}

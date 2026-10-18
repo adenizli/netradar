@@ -1,0 +1,9 @@
+{
+  "description": "Intentional one-bit corruption of first valid frame.",
+  "frames": [
+    {
+      "hex": "8D40621D58C382D690C8AC2863A6",
+      "expected_crc_valid": false
+    }
+  ]
+}

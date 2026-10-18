@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+fixtures/real_*.cu8
+fixtures/real_*.json
+.DS_Store

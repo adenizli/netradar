@@ -1,0 +1,64 @@
+{
+  "description": "Published real-example DF17 message bytes; each independently checked CRC-24. Not captured by NetRadar.",
+  "frames": [
+    {
+      "hex": "8D40621D58C382D690C8AC2863A7",
+      "df": 17,
+      "icao": "40621D",
+      "type_code": 11,
+      "kind": "airborne_position_even",
+      "source_url": "https://mode-s.org/1090mhz/"
+    },
+    {
+      "hex": "8D40621D58C386435CC412692AD6",
+      "df": 17,
+      "icao": "40621D",
+      "type_code": 11,
+      "kind": "airborne_position_odd",
+      "source_url": "https://mode-s.org/1090mhz/"
+    },
+    {
+      "hex": "8D4840D6202CC371C32CE0576098",
+      "df": 17,
+      "icao": "4840D6",
+      "type_code": 4,
+      "kind": "identification",
+      "source_url": "https://mode-s.org/1090mhz/content/ads-b/2-identification.html",
+      "expected_callsign": "KLM1023"
+    },
+    {
+      "hex": "8D485020994409940838175B284F",
+      "df": 17,
+      "icao": "485020",
+      "type_code": 19,
+      "kind": "airborne_velocity",
+      "source_url": "https://github.com/junzis/pyModeS",
+      "expected_groundspeed_knots": 159
+    },
+    {
+      "hex": "8D406B902015A678D4D220AA4BDA",
+      "df": 17,
+      "icao": "406B90",
+      "type_code": 4,
+      "kind": "identification",
+      "source_url": "https://github.com/junzis/pyModeS",
+      "expected_callsign": "EZY85MH"
+    },
+    {
+      "hex": "8D40058B58C901375147EFD09357",
+      "df": 17,
+      "icao": "40058B",
+      "type_code": 11,
+      "kind": "airborne_position_even",
+      "source_url": "https://github.com/junzis/pyModeS"
+    },
+    {
+      "hex": "8D40058B58C904A87F402D3B8C59",
+      "df": 17,
+      "icao": "40058B",
+      "type_code": 11,
+      "kind": "airborne_position_odd",
+      "source_url": "https://github.com/junzis/pyModeS"
+    }
+  ]
+}
