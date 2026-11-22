@@ -51,14 +51,17 @@ snapshots of the same capture for interval counts.
 | `acquisition` | `rf_bytes` read as CU8, `complex_samples` read as complete I/Q pairs, `emitted_samples` and `emitted_chunks` yielded, `queue_dropped_chunks` and `queue_dropped_samples` discarded when the live queue fills. |
 | `dsp` | `samples` processed, `chunk_gaps` in input indices and their `gap_samples`, `preamble_candidates`, `df17_prefixes` among those candidates, `ppm_tied_rejects` among the DF17 prefixes, and `demodulated_frames` prepared for CRC validation. |
 | `decoder` | `frames` received, `supported_df` and `unsupported_df`; `crc_clean`, `crc_corrected_one_bit` confirmed by the existing repair policy, and `crc_rejected` among supported DF; `supported_tc` and `unsupported_tc` among CRC-accepted frames; `decoded_events` emitted. `cpr_successes` and `cpr_failures` count supported position inputs with a resolved or unresolved pair, including a missing or expired counterpart. |
-| `delivery` | `accepted` or `rejected` attempts to POST a decoded event. A producer can observe the HTTP outcome, while the server can count the outcome of its own ingestion. |
+| `delivery` | Live HTTP counts `accepted` (successful HTTP status), `rejected` (4xx), `undelivered` (never sent), and `unconfirmed` (sent or attempted, with an unknown outcome). On shutdown these counts account for all decoded events. The synchronous replay path retains its accepted and rejected attempt counts. |
 | `display` | `fresh`, `stale`, `expired` count entries into those display states, including fresh on first display. These cumulative counts can exceed the current aircraft population. |
 
 Live acquisition exposes a `queue` object under its stage with the current
 `depth`, `high_water` and `capacity` in chunks. These gauges are null for
 replay and before the live queue is created. A DSP gap counts a discontinuity
 between received chunks. Queue drop counters include a trailing overflow even
-when no later chunk arrives to show a gap.
+when no later chunk arrives to show a gap. At 2 MS/s, chunk sizes of 8192,
+16384 and 32768 span 4.096, 8.192 and 16.384 ms, respectively. With the default
+64 chunks the corresponding maximum IQ queue holds 1, 2 and 4 MiB of CU8
+and covers approximately 0.26, 0.52 and 1.05 seconds of incoming RF.
 
 The stage activity timestamp changes on acquired bytes, processed DSP samples,
 CRC-accepted decoder frames, delivery attempts, or display transitions,
@@ -69,7 +72,7 @@ starting wall clock.
 Throughput divides the relevant counters by total monotonic elapsed seconds.
 Acquisition and DSP report complex samples per second. DSP, decoder and
 delivery respectively report demodulated frames, decoded events and attempted
-deliveries per second. Display uses transitions per second. Inapplicable or
+confirmed HTTP results per second. Display uses transitions per second. Inapplicable or
 unavailable rates are null.
 
 Latency durations are measured with a monotonic clock and reported in
@@ -80,11 +83,12 @@ the longest measured duration. The histogram exposes `sample_count`,
 `count` values. A null upper bound denotes the overflow bucket. A stage with no
 timed operations has latency status `unavailable` and null percentiles.
 Acquisition measures each sampled CU8 read, including time waiting for the pipe
-or file. DSP measures active chunk processing, excluding time suspended while
-the decoder and publisher run. Decoder measures the frame-to-event operation.
-Producer delivery measures a synchronous POST through receipt and parsing of
-its response. Connection errors and response failures count as rejected at the
-producer, where the server's ingestion outcome can be unknown.
+or file. Live acquisition also reports `queue_dwell_latency` from IQ enqueue
+to dequeue, and `consumer_chunk_latency` for the complete downstream work on a
+yielded chunk. DSP measures active chunk processing, excluding time suspended
+while the decoder and publisher run. Decoder measures the frame-to-event
+operation. Live producer delivery measures the background POST through receipt
+of response headers. The synchronous replay path also parses the response.
 
 `distinct_icao_windows.windows_seconds` uses keys `60`, `300` and `900`.
 Each window counts ICAOs from CRC-clean or corrected DF17 frames, including

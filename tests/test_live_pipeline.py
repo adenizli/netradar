@@ -8,6 +8,8 @@ import socket
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from threading import Event
+import time
 import unittest
 
 from netradar.acquisition.receiver import replay_cu8, stream_rtlsdr
@@ -69,6 +71,25 @@ class LivePipelineTest(unittest.TestCase):
         path.chmod(0o755)
         return path
 
+    def paced_executable(self, repeats, *, idle=False):
+        path = self.directory / "rtl_sdr_paced"
+        path.write_text(f"""#!{sys.executable}
+import os, sys, time
+open({str(self.pid_out)!r}, "w").write(str(os.getpid()))
+data = open({str(FIXTURE)!r}, "rb").read()
+began = time.monotonic()
+for repeat in range({repeats}):
+    for offset in range(0, len(data), 16384):
+        sample_bytes = data[offset:offset + 16384]
+        os.write(sys.stdout.fileno(), sample_bytes)
+        target = began + (repeat * len(data) + offset + len(sample_bytes)) / 4_000_000
+        time.sleep(max(0, target - time.monotonic()))
+if {idle!r}:
+    time.sleep(60)
+""")
+        path.chmod(0o755)
+        return path
+
     def live_command(self, path, *options):
         return [sys.executable, "-m", "netradar.pipeline", "--rtl-sdr",
                 "--rtl-sdr-command", str(path), "--queue-max-chunks", "256", *options]
@@ -115,6 +136,110 @@ class LivePipelineTest(unittest.TestCase):
         self.assertEqual(report["stages"]["delivery"]["latency"]["sample_count"], 1)
         self.assertTrue(all(event["metadata"]["capture_id"] == report["capture_id"] for _, event in received))
         self.assertIn("dropped=0", result.stderr)
+        self.assert_receiver_reaped()
+
+    def test_slow_http_drains_raw_events_in_order_without_iq_drops(self):
+        path = self.paced_executable(6)
+        report_path = self.directory / "metrics.json"
+        with receiver(lambda: time.sleep(0.07)) as (url, received):
+            result = subprocess.run(self.live_command(
+                path, "--queue-max-chunks", "64", "--max-samples", str(6 * TOTAL_SAMPLES),
+                "--backend-url", url, "--metrics-json", str(report_path),
+            ), cwd=ROOT, capture_output=True, text=True, timeout=10, check=True)
+        self.assertIn("dropped=0", result.stderr)
+        events = [event for _, event in received]
+        self.assertEqual(len(events), 42)
+        indices = [event["metadata"]["sample_index"] for event in events]
+        self.assertEqual(indices, sorted(indices))
+        expected = json.loads(FIXTURE.with_suffix(".json").read_text())["expected_frames"]
+        self.assertEqual([event["raw_frame"] for event in events], [item["hex"] for item in expected] * 6)
+        stages = json.loads(report_path.read_text())["stages"]
+        acquisition = stages["acquisition"]
+        self.assertEqual(acquisition["counters"]["complex_samples"], 6 * TOTAL_SAMPLES)
+        self.assertEqual(acquisition["counters"]["queue_dropped_samples"], 0)
+        self.assertEqual(acquisition["queue"]["depth"], 0)
+        self.assertGreater(acquisition["queue_dwell_latency"]["sample_count"], 0)
+        self.assertGreater(acquisition["consumer_chunk_latency"]["sample_count"], 0)
+        self.assertEqual(stages["delivery"]["counters"]["accepted"], 42)
+        self.assert_receiver_reaped()
+
+    def test_stalled_http_drain_reports_unconfirmed_and_undelivered(self):
+        path = self.paced_executable(1)
+        report_path = self.directory / "metrics.json"
+        release = Event()
+        with receiver(lambda: release.wait(4)) as (url, received):
+            try:
+                result = subprocess.run(self.live_command(
+                    path, "--max-samples", str(TOTAL_SAMPLES), "--backend-url", url,
+                    "--delivery-drain-timeout-seconds", "0.2", "--metrics-json", str(report_path),
+                ), cwd=ROOT, capture_output=True, text=True, timeout=4)
+            finally:
+                release.set()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("drain interrupted or timed out", result.stderr)
+        self.assertEqual(len(received), 1)
+        report = json.loads(report_path.read_text())
+        self.assertEqual(report["run_status"], "failed")
+        self.assertEqual(report["stages"]["delivery"]["counters"], {
+            "accepted": 0, "rejected": 0, "undelivered": 6, "unconfirmed": 1,
+        })
+        self.assert_receiver_reaped()
+
+    def test_saturated_delivery_queue_reports_failure_and_accounts_for_decoded_events(self):
+        path = self.paced_executable(2)
+        report_path = self.directory / "metrics.json"
+        release = Event()
+        with receiver(lambda: release.wait(4)) as (url, received):
+            try:
+                result = subprocess.run(self.live_command(
+                    path, "--max-samples", str(2 * TOTAL_SAMPLES), "--backend-url", url,
+                    "--delivery-max-events", "2", "--delivery-drain-timeout-seconds", "0.2",
+                    "--metrics-json", str(report_path),
+                ), cwd=ROOT, capture_output=True, text=True, timeout=4)
+            finally:
+                release.set()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("aircraft delivery queue full", result.stderr)
+        self.assertEqual(len(received), 1)
+        report = json.loads(report_path.read_text())
+        self.assertEqual(report["run_status"], "failed")
+        counters = report["stages"]["delivery"]["counters"]
+        self.assertEqual(counters, {"accepted": 0, "rejected": 0, "undelivered": 3, "unconfirmed": 1})
+        self.assertEqual(sum(counters.values()), report["stages"]["decoder"]["counters"]["decoded_events"])
+        self.assert_receiver_reaped()
+
+    def test_sigint_drains_already_decoded_events_and_reaps_receiver(self):
+        path = self.paced_executable(1, idle=True)
+        report_path = self.directory / "metrics.json"
+        release = Event()
+        with receiver(lambda: release.wait(4)) as (url, received):
+            process = subprocess.Popen(self.live_command(
+                path, "--backend-url", url, "--metrics-json", str(report_path),
+                "--metrics-interval-seconds", "0.05", "--chunk-samples", "8000",
+            ), cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            try:
+                deadline = time.monotonic() + 4
+                while time.monotonic() < deadline:
+                    if report_path.exists():
+                        report = json.loads(report_path.read_text())
+                        if report["stages"]["decoder"]["counters"]["decoded_events"] == 7:
+                            break
+                    time.sleep(0.01)
+                else:
+                    self.fail("producer did not decode the complete fixture")
+                process.send_signal(signal.SIGINT)
+                release.set()
+                _, stderr = process.communicate(timeout=4)
+                self.assertEqual(process.returncode, 130, stderr)
+            finally:
+                release.set()
+                if process.poll() is None:
+                    process.kill()
+                process.communicate()
+        self.assertEqual(len(received), 7)
+        report = json.loads(report_path.read_text())
+        self.assertEqual(report["run_status"], "interrupted")
+        self.assertEqual(report["stages"]["delivery"]["counters"]["accepted"], 7)
         self.assert_receiver_reaped()
 
     def test_backend_failure_stops_and_reaps_receiver(self):

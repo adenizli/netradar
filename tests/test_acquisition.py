@@ -188,6 +188,12 @@ class StreamTest(unittest.TestCase):
         self.assertTrue(all(c.sample_rate_hz == 2_400_000 for c in chunks))
         self.assert_no_reader_threads()
 
+    def test_long_sample_limit_omits_overflowing_native_limit(self):
+        with self.assertRaisesRegex(RuntimeError, "expected 3600000000"):
+            list(stream_rtlsdr(rtl_sdr_cmd=self.fake_cmd(), max_samples=3_600_000_000))
+        self.assertNotIn("-n", self.args_out.read_text().splitlines())
+        self.assert_no_reader_threads()
+
     def test_startup_failure_raises_with_stderr(self):
         with self.assertRaises(RuntimeError) as ctx, \
                 self.assertLogs('netradar.acquisition.receiver', level='WARNING') as logs:
