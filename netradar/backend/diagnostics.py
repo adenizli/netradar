@@ -105,14 +105,19 @@ class Diagnostics:
         validate_capture(capture)
         now = self._clock()
         if self._active is not None:
-            previous, _ = self._active
+            previous, seen = self._active
             before = previous["capture"]
             if capture["capture_id"] == before["capture_id"]:
                 if update["sequence"] <= previous["sequence"] or not capture_progresses(before, capture):
                     raise ValueError("Snapshot is out of order or metrics regressed")
             else:
+                # The producer's wall clock orders captures only while the previous one is
+                # still live. Once it has finished or gone stale, a new capture is accepted
+                # even if its start time is earlier: a Pi without an RTC can step its clock
+                # backwards, and rejecting every later capture would hide the receiver.
+                previous_live = before["run_status"] == "running" and now - seen < STALE_SECONDS
                 if (capture["capture_id"] in self._retained
-                        or capture["started_at_unix_ms"] <= before["started_at_unix_ms"]):
+                        or previous_live and capture["started_at_unix_ms"] <= before["started_at_unix_ms"]):
                     raise ValueError("Capture is out of order")
                 self._retained[before["capture_id"]] = self._summary(before)
                 if len(self._retained) > RETAINED_CAPTURES:

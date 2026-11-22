@@ -9,7 +9,7 @@ from netradar.metrics import FunnelMetrics
 HAS_BACKEND = find_spec("fastapi") is not None and find_spec("httpx") is not None
 if HAS_BACKEND:
     from fastapi.testclient import TestClient
-    from netradar.backend.diagnostics import MAX_BODY_BYTES, RETAINED_CAPTURES, Diagnostics
+    from netradar.backend.diagnostics import MAX_BODY_BYTES, RETAINED_CAPTURES, STALE_SECONDS, Diagnostics
     from netradar.backend.server import create_app
     from tests.test_stream import position
 
@@ -98,6 +98,37 @@ class DiagnosticsTest(unittest.TestCase):
                 self.send(client, self.capture("rf"))
             self.assertEqual(client.post("/api/diagnostics", json=self.payload(oldest, 99)).status_code, 422)
             self.assertEqual(len(client.get("/api/diagnostics").json()["retained_captures"]), RETAINED_CAPTURES)
+
+    def test_new_capture_after_producer_clock_steps_backwards(self):
+        # The backend clock (self.now) only moves forward; the producer's wall clock
+        # steps back by an hour, e.g. a Pi without an RTC correcting its time.
+        self.now = 100_000
+
+        def capture(wall_offset_s):
+            return FunnelMetrics("rf", clock_ns=lambda: self.now * 10**9,
+                                 wall_clock_ns=lambda: (self.now + wall_offset_s) * 10**9)
+
+        with self.client() as client:
+            first = capture(0)
+            first.observe("acquisition", counters={"rf_bytes": 2})
+            self.send(client, first)
+            # While the first capture is live, an earlier-starting capture is a conflict.
+            self.now += 1
+            self.assertEqual(client.post("/api/diagnostics", json=self.payload(capture(-3600))).status_code, 422)
+            # The first producer stops sending heartbeats and is restarted with the stepped clock.
+            self.now += STALE_SECONDS
+            restarted = capture(-3600)
+            self.send(client, restarted)
+            report = client.get("/api/diagnostics").json()
+            self.assertEqual(report["capture"]["capture_id"], restarted.capture_id)
+            self.assertEqual(report["retained_captures"][0]["capture_id"], first.capture_id)
+            # A finished capture never blocks the next one, even if that one starts earlier.
+            restarted.finish()
+            self.send(client, restarted, 2)
+            self.now += 1
+            self.send(client, capture(-7200))
+            # Returning to a retained capture is still rejected.
+            self.assertEqual(client.post("/api/diagnostics", json=self.payload(first, 9)).status_code, 422)
 
     def test_malformed_oversized_cross_origin_and_non_loopback(self):
         payload = self.payload(self.capture())
