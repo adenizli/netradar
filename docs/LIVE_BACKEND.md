@@ -175,8 +175,16 @@ NETRADAR_ALLOWED_ORIGINS=http://receiver.local:5173 \
   --host 127.0.0.1 --port 8000 --workers 1
 ```
 
+LAN demosu için `NETRADAR_ALLOWED_ORIGINS=*` verilebilir. Bu, HTTP CORS'ta, WS
+Origin kontrolünde ve `POST /api/events`'te her origin'i kabul eder; arayüz LAN'daki
+herhangi bir adresten açılabilir. Liste içinde `*` geçmesi de aynı etkiyi yapar.
+
+> ⚠️ Kimlik doğrulama olmadığı için bu modda ağa erişen **herhangi bir web sayfası**
+> canlı akışı okuyabilir ve `POST /api/events` ile sahte olay gönderebilir. Yalnızca
+> güvendiğiniz ağda ve demo sırasında kullanın.
+
 Varsayılan servis yalnız yerel makineye bağlıdır. Bu aşamada kimlik doğrulama
-eklenmemiştir; LAN dağıtımı için erişim ayarları ayrıca ele alınmalıdır.
+eklenmemiştir; kalıcı bir LAN dağıtımı için erişim ayarları ayrıca ele alınmalıdır.
 
 ## 7. Dosyalar ve doğrulama
 
