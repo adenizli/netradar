@@ -87,12 +87,8 @@ function status(age: number | null, a: Aircraft) {
       ? ("stale" as const)
       : ("fresh" as const);
 }
-export function refreshContact(
-  c: Contact,
-  tick: number,
-  demo = false,
-): Contact {
-  const age = demo && hasPosition(c.aircraft) ? 0 : ageOf(c, tick);
+export function refreshContact(c: Contact, tick: number): Contact {
+  const age = ageOf(c, tick);
   const nextStatus = status(age, c.aircraft);
   // One-second display precision; the fresh/stale boundary is still exact.
   const displayAge = age === null ? null : Math.floor(age / 1000) * 1000;
@@ -114,14 +110,12 @@ export function mergeContact(
   old: Contact | undefined,
   update: AircraftUpdate,
   now: number,
-  demo = false,
   tick = performance.now(),
 ): Contact {
   let a = { ...update.data };
   // Buffered events may precede the HTTP snapshot. Keep its newer full summary,
   // including callsign/velocity, while retaining the incoming raw event below.
   if (
-    !demo &&
     old &&
     a.stream_id &&
     a.stream_id === old.aircraft.stream_id &&
@@ -138,7 +132,6 @@ export function mergeContact(
     old &&
     old.positionKey &&
     changed &&
-    !demo &&
     compareFix(
       a,
       evidence,
@@ -175,13 +168,11 @@ export function mergeContact(
           : null;
   const previousAge = old ? ageOf(old, tick) : null;
   const age =
-    demo && hasPosition(a)
-      ? 0
-      : !changed && old
-        ? previousAge === null
-          ? reportedAge
-          : Math.max(previousAge, reportedAge ?? 0)
-        : reportedAge;
+    !changed && old
+      ? previousAge === null
+        ? reportedAge
+        : Math.max(previousAge, reportedAge ?? 0)
+      : reportedAge;
   const trail = old?.trail.slice() ?? [];
   const last = trail.at(-1);
   if (
@@ -198,7 +189,7 @@ export function mergeContact(
     positionAgeAtReceiptMs: age,
     positionClockAt: tick,
   };
-  return refreshContact(contact, tick, demo);
+  return refreshContact(contact, tick);
 }
 export const positionAgeText = (a: Aircraft) =>
   typeof a.position_age_ms === "number"

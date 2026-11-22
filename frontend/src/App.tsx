@@ -1,14 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  Check,
-  ChevronDown,
-  ExternalLink,
-  Pause,
-  Play,
-  RadioTower,
-  Settings2,
-} from "lucide-react";
-import type { Settings, SourceMode } from "./types";
+import { Check, ExternalLink, RadioTower, Settings2 } from "lucide-react";
+import type { Settings } from "./types";
 import { TrafficSummary } from "./components/TrafficSummary";
 import { Notifications } from "./components/Notifications";
 import { RadarGlyph } from "./components/Brand";
@@ -20,7 +12,8 @@ import { useTraffic } from "./hooks/useTraffic";
 import { useZones } from "./hooks/useZones";
 import { hasPosition } from "./lib/geo";
 import { membersInZone } from "./lib/geofence";
-const START_LIVE = import.meta.env.VITE_START_LIVE === "1";
+// Set by start.sh, which also passes the backend address in VITE_BACKEND_URL.
+const FROM_LAUNCHER = import.meta.env.VITE_LAUNCHER === "1";
 const DEFAULT_SETTINGS: Settings = {
   receiver: [41.085, 29.051],
   stationName: "İstanbul · Boğaziçi",
@@ -46,7 +39,9 @@ function readSettings(): Settings {
       Math.abs(s.receiver[1]) <= 180
     )
       // In launcher mode, do not retain a stale backend URL from localStorage.
-      return START_LIVE ? { ...s, backendUrl: DEFAULT_SETTINGS.backendUrl } : s;
+      return FROM_LAUNCHER
+        ? { ...s, backendUrl: DEFAULT_SETTINGS.backendUrl }
+        : s;
   } catch {
     /* Defaults work with unavailable storage. */
   }
@@ -69,9 +64,6 @@ function Clock() {
 }
 export default function App() {
   const [settings, setSettings] = useState<Settings>(readSettings);
-  const [mode, setMode] = useState<SourceMode>(START_LIVE ? "live" : "demo"),
-    [paused, setPaused] = useState(false),
-    [speed, setSpeed] = useState(4);
   const [selected, setSelected] = useState<string | null>(null),
     [query, setQuery] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false),
@@ -80,10 +72,7 @@ export default function App() {
     [preview, setPreview] = useState<number | null>(null);
   const [focus, setFocus] = useState<{ id: string; key: number } | null>(null);
   const { contacts, connection, rate, session } = useTraffic(
-    mode,
     settings.backendUrl,
-    paused,
-    speed,
   );
   const aircraft = useMemo(() => contacts.map((c) => c.aircraft), [contacts]);
   const { zones, setZones, alerts, toasts, dismiss } = useZones(
@@ -100,14 +89,7 @@ export default function App() {
         membersInZone(aircraft, z, settings.receiver).map((a) => a.icao),
       ),
   ).size;
-  const connected =
-    connection.state === "connected" || connection.state === "paused";
-  const changeMode = (next: SourceMode) => {
-    setMode(next);
-    setSelected(null);
-    setQuery("");
-    setPaused(false);
-  };
+  const connected = connection.state === "connected";
   const select = (id: string | null) => {
     setSelected(id);
   };
@@ -149,13 +131,7 @@ export default function App() {
             title={connection.message}
           >
             <span className="live-dot" />
-            {mode === "demo"
-              ? paused
-                ? "Demo duraklatıldı"
-                : "Kurgusal demo"
-              : connected
-                ? "Alıcı bağlı"
-                : "Bağlantı bekleniyor"}
+            {connected ? "Alıcı bağlı" : "Bağlantı bekleniyor"}
           </div>
           <Clock />
           <button
@@ -177,24 +153,6 @@ export default function App() {
               {settings.stationName}
             </p>
           </div>
-          <div className="workspace-actions">
-            <div className="source-toggle" aria-label="Veri kaynağı">
-              <button
-                aria-pressed={mode === "demo"}
-                className={mode === "demo" ? "active" : ""}
-                onClick={() => changeMode("demo")}
-              >
-                Demo
-              </button>
-              <button
-                aria-pressed={mode === "live"}
-                className={mode === "live" ? "active" : ""}
-                onClick={() => changeMode("live")}
-              >
-                Canlı alıcı{mode === "live" && <span className="tiny-dot" />}
-              </button>
-            </div>
-          </div>
         </div>
         <div className="radar-toolbar">
           <TrafficSummary
@@ -204,32 +162,6 @@ export default function App() {
             rate={rate}
           />
           <div className="playback-tools">
-            {mode === "demo" && (
-              <>
-                <button
-                  className="text-button pause-button"
-                  onClick={() => setPaused((p) => !p)}
-                  aria-label={
-                    paused ? "Simülasyonu sürdür" : "Simülasyonu duraklat"
-                  }
-                >
-                  {paused ? <Play size={13} /> : <Pause size={13} />}{" "}
-                  {paused ? "Sürdür" : "Duraklat"}
-                </button>
-                <label className="speed-select">
-                  <select
-                    aria-label="Demo hızı"
-                    value={speed}
-                    onChange={(e) => setSpeed(+e.target.value)}
-                  >
-                    <option value="1">1× hız</option>
-                    <option value="4">4× hız</option>
-                    <option value="12">12× hız</option>
-                  </select>
-                  <ChevronDown size={12} />
-                </label>
-              </>
-            )}
             <button
               className={`trail-toggle ${trails ? "active" : ""}`}
               aria-pressed={trails}
@@ -239,7 +171,7 @@ export default function App() {
             </button>
           </div>
         </div>
-        {mode === "live" && !connected && (
+        {!connected && (
           <div className="connection-banner" role="status">
             <RadioTower size={15} />
             <span>{connection.message}</span>
@@ -269,8 +201,6 @@ export default function App() {
               focus={focus}
               trails={trails}
               connected={connected}
-              scanning={!paused}
-              animate={mode === "demo" && !paused}
             />
             <Notifications
               alerts={toasts}

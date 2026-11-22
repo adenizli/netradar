@@ -104,8 +104,7 @@ tercihidir; protokolün zorunlu bir sınırı değildir. 30 saniye dolduğunda:
 
 Uçağın son mesajından itibaren 60 saniyelik mevcut silinme kuralı ayrıdır. Yalnızca
 çağrı adı mesajları gelen uçak listede kalabilir; bu onun konumunu güncel yapmaz.
-Demo modu kurgusal bir simülasyondur; duraklatmak demo konumlarını RF verisi gibi
-eskimeye zorlamaz.
+Arayüzde demo modu yoktur; bu kurallar yalnız canlı backend verisine uygulanır.
 
 ## 5. Doğrulama
 

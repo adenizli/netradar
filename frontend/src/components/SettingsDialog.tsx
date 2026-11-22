@@ -123,8 +123,7 @@ export function SettingsDialog({
           <code>GET /api/aircraft</code>
           <code>WS /ws/aircraft</code>
           <p>
-            Canlı mod, bu servisleri sağlayan backend’e bağlanır. Demo modunda
-            bağlantı kurulmaz.
+            Arayüz açılır açılmaz bu servisleri sağlayan backend’e bağlanır.
           </p>
         </div>
         {error && (

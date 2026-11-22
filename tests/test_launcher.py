@@ -15,7 +15,14 @@ class LauncherTest(unittest.TestCase):
             ["bash", "start.sh", "--help"], cwd=ROOT, text=True
         )
         self.assertIn("./start.sh", output)
-        self.assertIn("--demo", output)
+        self.assertNotIn("--demo", output)
+
+    def test_demo_flag_is_rejected(self):
+        result = subprocess.run(
+            ["bash", "start.sh", "--demo"], cwd=ROOT, capture_output=True, text=True
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Bilinmeyen argüman", result.stderr)
 
     def test_missing_session_stop_is_harmless(self):
         subprocess.run(

@@ -22,12 +22,11 @@ git pull --ff-only
 ./start.sh
 ```
 
-Başlatıcı Pi'ye SSH ile bağlanır (varsayılan `netradar@netradar.local`); gerekirse Pi'deki repoyu klonlar/günceller ve Python bağımlılıklarını kurar. Pi üzerinde **RTL-SDR + FastAPI** başlar. Mac'te **SSH port tüneli** (`127.0.0.1:8000`) ve Vite (`127.0.0.1:5173`) açılır. Tarayıcı otomatik açılır ve arayüz **Canlı alıcı** modunda başlar. **Ctrl+C** yalnızca bu oturumda başlatılan servisleri kapatır.
+Başlatıcı Pi'ye SSH ile bağlanır (varsayılan `netradar@netradar.local`); gerekirse Pi'deki repoyu klonlar/günceller ve Python bağımlılıklarını kurar. Pi üzerinde **RTL-SDR + FastAPI** başlar. Mac'te **SSH port tüneli** (`127.0.0.1:8000`) ve Vite (`127.0.0.1:5173`) açılır. Tarayıcı otomatik açılır ve arayüz doğrudan canlı alıcıya bağlanır (demo modu yoktur). **Ctrl+C** yalnızca bu oturumda başlatılan servisleri kapatır.
 
 İlk çalıştırma için Mac'te Node.js **22.12+ veya 24+**, npm, Python 3, SSH ve Pi'ye erişim; Pi'de Python 3, `rtl_sdr`, `curl`, `setsid` ve bağlı dongle gerekir. Backend Pi üzerinde yalnızca localhost'a bağlanır; LAN'a açık API portu gerekmiyor. SSH ve frontend işlemleri Mac üzerinde çalışır.
 
 ```bash
-./start.sh --demo                                     # Donanım olmadan demo
 NETRADAR_PI_TARGET=netradar@192.168.0.120 ./start.sh  # IP ile SSH
 NETRADAR_GAIN_DB=33.8 ./start.sh                      # Alternatif alıcı kazancı
 ```
@@ -79,7 +78,7 @@ In another terminal, send the seven known synthetic-fixture events:
   | .venv/bin/python -m netradar.backend.forward
 ```
 
-Choose **Canlı alıcı** in the UI, using `http://localhost:8000` as the backend URL.
+Open the UI; it connects to the backend at `http://localhost:8000` by default.
 This in-memory first step uses one worker and starts empty; run the IQ producer
 below in a separate process to feed DSP output. It does not start live SDR acquisition.
 See the [step-by-step backend guide](docs/LIVE_BACKEND.md) for architecture,
@@ -126,8 +125,8 @@ See [live setup, replay metadata and failure behavior](docs/DSP_INTEGRATION.md).
 The React + TypeScript + Leaflet interface is now implemented in `frontend/`.
 It includes a green receiver-centered radar map, directional aircraft markers,
 full decoder-event details, multiple radius zones and entry/exit notifications.
-It starts with clearly labeled fictional demo traffic, and a separate live
-adapter connects to the FastAPI HTTP/WS backend. The compact desktop layout keeps
+It opens directly on the live adapter, which connects to the FastAPI HTTP/WS
+backend; there is no demo traffic. The compact desktop layout keeps
 aircraft, map and zone controls together without a navigation rail or file uploader. See [frontend setup and integration](frontend/README.md).
 
 ```bash

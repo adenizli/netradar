@@ -304,8 +304,7 @@ export function FlightPanel({
                   <FileCode2 size={26} />
                   <h3>Ham mesaj yok</h3>
                   <p>
-                    Demo verileri kurgusaldır. Gerçek decoder mesajları
-                    alındığında burada görünecek.
+                    Bu uçak için decoder mesajı alındığında burada görünecek.
                   </p>
                 </div>
               )}

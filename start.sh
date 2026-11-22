@@ -142,48 +142,44 @@ run_mac() {
         die "Varsayılan başlatma Mac içindir. Pi yalnızca --pi ile başlatılır."
     install_frontend
     mkdir -p "$RUNTIME"
-    local mode="${1:-live}"
     TARGET="${NETRADAR_PI_TARGET:-netradar@netradar.local}"
     trap cleanup_mac EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
-    if [[ "$mode" == "live" ]]; then
-        need ssh "Pi için SSH gerekli."
-        need python3 "Oturum kimliği oluşturmak için Python 3 gerekli."
-        SSH_TMP="$(mktemp -d /tmp/netradar.XXXXXX)"
-        SSH_SOCKET="$SSH_TMP/ssh.sock"
-        local session directory quoted_dir remote_start
-        session="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
-        directory="${NETRADAR_PI_DIR:-netradar}"
-        [[ -n "$directory" && "$directory" != "." && "$directory" != ".." ]] ||
-            die "NETRADAR_PI_DIR geçersiz."
-        printf -v quoted_dir '%q' "$directory"
-        [[ "$directory" == /* ]] || quoted_dir="\$HOME/$quoted_dir"
-        info "Pi SSH tüneli: $TARGET (gerekirse bir defa şifre sorulur)."
-        ssh -M -S "$SSH_SOCKET" -o ControlMaster=yes -o ControlPersist=no \
-            -o ExitOnForwardFailure=yes -o ConnectTimeout=12 -f -N \
-            -L 127.0.0.1:8000:127.0.0.1:8000 "$TARGET" ||
-            die "Pi'ye SSH bağlantısı kurulamadı."
-        remote_start="if [ ! -d $quoted_dir/.git ]; then git clone https://github.com/adenizli/netradar.git $quoted_dir || exit 1; fi; git -C $quoted_dir pull --ff-only && cd $quoted_dir && exec env NETRADAR_SESSION_ID=$session NETRADAR_GAIN_DB=${NETRADAR_GAIN_DB:-35} bash start.sh --pi"
-        REMOTE_STOP="cd $quoted_dir && bash start.sh --stop-pi $session"
-        info "Pi'de backend ve RTL-SDR başlatılıyor..."
-        ssh -S "$SSH_SOCKET" -o ControlMaster=auto -o BatchMode=yes \
-            -T "$TARGET" "$remote_start" &
-        REMOTE_PID=$!
-        local i
-        for i in $(seq 1 180); do
-            ready "$BACKEND/healthz" && break
-            kill -0 "$REMOTE_PID" 2>/dev/null || die "Pi başlatılamadı; loglara bak."
-            sleep 1
-        done
-        ready "$BACKEND/healthz" || die "Backend hazır değil; Pi loglarını kontrol et."
-    fi
+    need ssh "Pi için SSH gerekli."
+    need python3 "Oturum kimliği oluşturmak için Python 3 gerekli."
+    SSH_TMP="$(mktemp -d /tmp/netradar.XXXXXX)"
+    SSH_SOCKET="$SSH_TMP/ssh.sock"
+    local session directory quoted_dir remote_start
+    session="$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
+    directory="${NETRADAR_PI_DIR:-netradar}"
+    [[ -n "$directory" && "$directory" != "." && "$directory" != ".." ]] ||
+        die "NETRADAR_PI_DIR geçersiz."
+    printf -v quoted_dir '%q' "$directory"
+    [[ "$directory" == /* ]] || quoted_dir="\$HOME/$quoted_dir"
+    info "Pi SSH tüneli: $TARGET (gerekirse bir defa şifre sorulur)."
+    ssh -M -S "$SSH_SOCKET" -o ControlMaster=yes -o ControlPersist=no \
+        -o ExitOnForwardFailure=yes -o ConnectTimeout=12 -f -N \
+        -L 127.0.0.1:8000:127.0.0.1:8000 "$TARGET" ||
+        die "Pi'ye SSH bağlantısı kurulamadı."
+    remote_start="if [ ! -d $quoted_dir/.git ]; then git clone https://github.com/adenizli/netradar.git $quoted_dir || exit 1; fi; git -C $quoted_dir pull --ff-only && cd $quoted_dir && exec env NETRADAR_SESSION_ID=$session NETRADAR_GAIN_DB=${NETRADAR_GAIN_DB:-35} bash start.sh --pi"
+    REMOTE_STOP="cd $quoted_dir && bash start.sh --stop-pi $session"
+    info "Pi'de backend ve RTL-SDR başlatılıyor..."
+    ssh -S "$SSH_SOCKET" -o ControlMaster=auto -o BatchMode=yes \
+        -T "$TARGET" "$remote_start" &
+    REMOTE_PID=$!
+    local i
+    for i in $(seq 1 180); do
+        ready "$BACKEND/healthz" && break
+        kill -0 "$REMOTE_PID" 2>/dev/null || die "Pi başlatılamadı; loglara bak."
+        sleep 1
+    done
+    ready "$BACKEND/healthz" || die "Backend hazır değil; Pi loglarını kontrol et."
     info "Radar arayüzü başlatılıyor..."
     (cd frontend; export VITE_BACKEND_URL="$BACKEND"; \
-        export VITE_START_LIVE="$([[ "$mode" == "live" ]] && echo 1 || echo 0)"; \
+        export VITE_LAUNCHER=1; \
         exec ./node_modules/.bin/vite --host 127.0.0.1 --port 5173 --strictPort) &
     WEB_PID=$!
-    local i
     for i in $(seq 1 45); do
         ready "$RADAR" && break
         kill -0 "$WEB_PID" 2>/dev/null || die "Frontend açılamadı."
@@ -194,9 +190,7 @@ run_mac() {
     open "$RADAR" >/dev/null 2>&1 || true
     while :; do
         kill -0 "$WEB_PID" 2>/dev/null || die "Frontend kapandı."
-        if [[ "$mode" == "live" ]]; then
-            kill -0 "$REMOTE_PID" 2>/dev/null || die "Pi bağlantısı/alıcı kapandı."
-        fi
+        kill -0 "$REMOTE_PID" 2>/dev/null || die "Pi bağlantısı/alıcı kapandı."
         sleep 1
     done
 }
@@ -204,16 +198,14 @@ run_mac() {
 case "${1:-}" in
     --pi) run_pi ;;
     --stop-pi) [[ -n "${2:-}" ]] && stop_pi "$2" ;;
-    --demo) run_mac demo ;;
     --help|-h)
         cat <<'HELP'
 NetRadar tek komut (Mac -> Raspberry Pi + frontend)
   ./start.sh          Canlı RTL-SDR + backend + radar arayüzü
-  ./start.sh --demo   Yalnızca kurgusal radar arayüzü
 Değişkenler: NETRADAR_PI_TARGET, NETRADAR_PI_DIR, NETRADAR_GAIN_DB
 Kapat: Ctrl+C
 HELP
         ;;
-    "") run_mac live ;;
+    "") run_mac ;;
     *) die "Bilinmeyen argüman: $1 (./start.sh --help)" ;;
 esac

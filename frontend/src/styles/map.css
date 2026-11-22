@@ -185,9 +185,6 @@
   cursor: pointer;
   outline: none;
 }
-.plane-position.smooth {
-  transition: transform 1s linear;
-}
 .plane-hit-target {
   fill: transparent;
 }
