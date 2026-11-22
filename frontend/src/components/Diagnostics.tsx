@@ -95,6 +95,7 @@ function Funnel({ capture, report }: { capture: Capture; report: Report }) {
                 : `${metric(queue.depth)} / ${metric(queue.capacity)}`,
             ],
             ["En yüksek kuyruk derinliği", metric(queue.peak)],
+            ["Kuyruk taşma olayı", metric(acquisition.counters.queue_drop_events)],
           ]}
         />
         <Card
@@ -138,6 +139,8 @@ function Funnel({ capture, report }: { capture: Capture; report: Report }) {
           values={[
             ["Kabul edilen gönderim", metric(delivery.counters.accepted)],
             ["Başarısız gönderim", metric(delivery.counters.rejected)],
+            ["Gönderilemeyen olay", metric(delivery.counters.undelivered)],
+            ["Onayı belirsiz olay", metric(delivery.counters.unconfirmed)],
           ]}
         />
         <Card

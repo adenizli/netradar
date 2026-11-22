@@ -122,6 +122,27 @@ describe("operator diagnostics", () => {
     });
   });
 
+  it("shows the live delivery backlog and overflow episodes when the producer sends them", () => {
+    const payload = report();
+    const stages = payload.capture.stages;
+    Object.assign(stages.acquisition.counters, { queue_drop_events: 3 });
+    Object.assign(stages.delivery.counters, { undelivered: 4, unconfirmed: 1 });
+    const data = parseDiagnostics(payload);
+    expect(data.partial).toBe(false);
+    expect(data.capture!.stages.acquisition.counters.queue_drop_events).toBe(3);
+    expect(data.capture!.stages.delivery.counters).toMatchObject({
+      undelivered: 4,
+      unconfirmed: 1,
+    });
+  });
+
+  it("does not mark an older producer without backlog counters as partial", () => {
+    const data = parseDiagnostics(report());
+    expect(data.partial).toBe(false);
+    expect(data.capture!.stages.delivery.counters.undelivered).toBeNull();
+    expect(data.capture!.stages.acquisition.counters.queue_drop_events).toBeNull();
+  });
+
   it("separates CRC rejection from callsign-only traffic with no CPR fix", () => {
     const rejected = parseDiagnostics(
       report({ receiver: "no_valid_traffic", clean: 0, rejected: 9 }),

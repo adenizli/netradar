@@ -66,7 +66,7 @@ export function activityAge(
 }
 
 export const stageCounters = {
-  acquisition: ["complex_samples", "queue_dropped_samples"],
+  acquisition: ["complex_samples", "queue_dropped_samples", "queue_drop_events"],
   dsp: ["preamble_candidates", "df17_prefixes"],
   decoder: [
     "crc_clean",
@@ -75,9 +75,17 @@ export const stageCounters = {
     "cpr_successes",
     "cpr_failures",
   ],
-  delivery: ["accepted", "rejected"],
+  delivery: ["accepted", "rejected", "undelivered", "unconfirmed"],
   display: ["fresh", "stale", "expired"],
 } as const;
+
+// Added with the decoupled live delivery (#9). Older producers do not send them,
+// so their absence must not mark the snapshot as partial.
+const optionalCounters: ReadonlySet<string> = new Set([
+  "queue_drop_events",
+  "undelivered",
+  "unconfirmed",
+]);
 
 type StageName = keyof typeof stageCounters;
 type CounterName = (typeof stageCounters)[StageName][number];
@@ -160,7 +168,7 @@ export function parseDiagnostics(value: unknown): Diagnostics {
     const counters = record(stage.counters);
     const entries = stageCounters[name].map((metric) => {
       const count = number(counters[metric]);
-      if (count === null) partial = true;
+      if (count === null && !optionalCounters.has(metric)) partial = true;
       return [metric, count];
     });
     return {
