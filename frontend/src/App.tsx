@@ -20,6 +20,7 @@ import { useTraffic } from "./hooks/useTraffic";
 import { useZones } from "./hooks/useZones";
 import { hasPosition } from "./lib/geo";
 import { membersInZone } from "./lib/geofence";
+const START_LIVE = import.meta.env.VITE_START_LIVE === "1";
 const DEFAULT_SETTINGS: Settings = {
   receiver: [41.085, 29.051],
   stationName: "İstanbul · Boğaziçi",
@@ -44,7 +45,8 @@ function readSettings(): Settings {
       Math.abs(s.receiver[0]) <= 85 &&
       Math.abs(s.receiver[1]) <= 180
     )
-      return s;
+      // In launcher mode, do not retain a stale backend URL from localStorage.
+      return START_LIVE ? { ...s, backendUrl: DEFAULT_SETTINGS.backendUrl } : s;
   } catch {
     /* Defaults work with unavailable storage. */
   }
@@ -67,7 +69,7 @@ function Clock() {
 }
 export default function App() {
   const [settings, setSettings] = useState<Settings>(readSettings);
-  const [mode, setMode] = useState<SourceMode>("demo"),
+  const [mode, setMode] = useState<SourceMode>(START_LIVE ? "live" : "demo"),
     [paused, setPaused] = useState(false),
     [speed, setSpeed] = useState(4);
   const [selected, setSelected] = useState<string | null>(null),
