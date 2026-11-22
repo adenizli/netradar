@@ -1,0 +1,10 @@
+[Unit]
+Description=Check GitHub for NetRadar updates every 2 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+RandomizedDelaySec=15s
+
+[Install]
+WantedBy=timers.target

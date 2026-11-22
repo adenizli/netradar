@@ -1,0 +1,22 @@
+# NetRadar receiver as a systemd *user* service on the Raspberry Pi.
+# Install with: bash scripts/pi_install_service.sh  (@ROOT@ is replaced by the repo path)
+[Unit]
+Description=NetRadar ADS-B receiver (RTL-SDR + FastAPI on 127.0.0.1:8000)
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@
+Environment=PYTHONUNBUFFERED=1
+# Optional settings, e.g. NETRADAR_GAIN_DB=33.8
+EnvironmentFile=-%h/.config/netradar.env
+ExecStart=/bin/bash "@ROOT@/start.sh" --service
+KillMode=control-group
+TimeoutStopSec=20
+SuccessExitStatus=130 143
+# Without a dongle or after a crash, retry every 15 s instead of giving up.
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target
