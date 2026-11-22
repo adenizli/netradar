@@ -245,11 +245,12 @@ class _ObservedQueue(queue.Queue):
         metrics.observe_queue(depth=0, capacity=capacity)
 
     def _put(self, item):
-        super()._put(item)
+        super()._put((item, self._metrics.begin_latency("queue_dwell_latency")))
         self._metrics.observe_queue(depth=self._qsize(), capacity=self.maxsize)
 
     def _get(self):
-        item = super()._get()
+        item, started = super()._get()
+        self._metrics.observe_acquisition_latency("queue_dwell_latency", started)
         self._metrics.observe_queue(depth=self._qsize(), capacity=self.maxsize)
         return item
 
@@ -281,7 +282,8 @@ def _rtl_sdr_command(
         "-p", str(ppm),
         "-d", str(device_index),
     ]
-    if max_samples is not None:
+    # rtl_sdr stores the byte limit in uint32_t after doubling the sample count.
+    if max_samples is not None and max_samples <= (2**32 - 1) // 2:
         cmd += ["-n", str(max_samples)]
     cmd.append("-")  # write samples to stdout
     return cmd
@@ -300,11 +302,12 @@ def stream_rtlsdr(
     stats: StreamStats | None = None,
     queue_max_chunks: int = 64,
     metrics: FunnelMetrics | None = None,
+    check_consumer=None,
 ) -> Iterator[IqChunk]:
     """Stream live IQ from the ``rtl_sdr`` CLI (apt package ``rtl-sdr``).
 
     ``gain_db=None`` selects automatic gain. ``max_samples`` stops after that
-    many complex samples (also passed to rtl_sdr as ``-n``). ``rtl_sdr_cmd``
+    many complex samples (also passed as ``-n`` when its byte limit fits). ``rtl_sdr_cmd``
     may be a string or a list, so tests can substitute a fake program.
 
     Chunks are contiguous unless the internal queue (``queue_max_chunks``
@@ -356,6 +359,7 @@ def stream_rtlsdr(
         stats=stats if stats is not None else StreamStats(),
         queue_max_chunks=queue_max_chunks,
         metrics=metrics,
+        check_consumer=check_consumer,
     )
 
 
@@ -451,7 +455,7 @@ def _rtl_sdr_error(cmd, message: str, tail) -> RuntimeError:
 
 
 def _stream(cmd, *, sample_rate_hz, center_frequency_hz, chunk_samples, max_samples, stats,
-            queue_max_chunks, metrics):
+            queue_max_chunks, metrics, check_consumer):
     chunks = (queue.Queue(queue_max_chunks) if metrics is None
               else _ObservedQueue(queue_max_chunks, metrics))
     stop = threading.Event()
@@ -500,6 +504,8 @@ def _stream(cmd, *, sample_rate_hz, center_frequency_hz, chunk_samples, max_samp
         reader.start()
         stderr_reader.start()
         while True:
+            if check_consumer is not None:
+                check_consumer()
             try:
                 start, data = chunks.get(timeout=0.1)
             except queue.Empty:
@@ -514,7 +520,10 @@ def _stream(cmd, *, sample_rate_hz, center_frequency_hz, chunk_samples, max_samp
                 metrics._record("acquisition", counters={
                     "emitted_samples": chunk.sample_count, "emitted_chunks": 1,
                 })
+            started = metrics.begin_latency("consumer_chunk_latency") if metrics is not None else None
             yield chunk
+            if metrics is not None:
+                metrics.observe_acquisition_latency("consumer_chunk_latency", started)
 
         if state.error is not None:
             raise RuntimeError(f"Reading samples from {cmd[0]} failed: {state.error}") from state.error

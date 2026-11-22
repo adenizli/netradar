@@ -15,7 +15,10 @@ def validate_capture(capture):
     if capture["distinct_icao_windows"]["windows_seconds"].keys() != {"60", "300", "900"}:
         raise ValueError("Invalid ICAO windows")
     for name, stage in capture["stages"].items():
-        if set(stage["counters"]) != set(STAGE_COUNTERS[name]):
+        counters = set(stage["counters"])
+        if counters != set(STAGE_COUNTERS[name]) and not (
+            name == "delivery" and counters == {"accepted", "rejected"}
+        ):
             raise ValueError("Invalid counter set")
         activity = stage["last_activity_elapsed_seconds"]
         wall = stage["last_activity_unix_ms"]
@@ -60,7 +63,7 @@ def capture_progresses(before, after):
         return False
     for name, stage in before["stages"].items():
         next_stage = after["stages"][name]
-        if any(regressed(count, next_stage["counters"][key]) for key, count in stage["counters"].items()):
+        if any(regressed(count, next_stage["counters"].get(key)) for key, count in stage["counters"].items()):
             return False
         if regressed(stage["last_activity_elapsed_seconds"], next_stage["last_activity_elapsed_seconds"]):
             return False

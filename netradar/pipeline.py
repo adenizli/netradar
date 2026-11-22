@@ -5,6 +5,7 @@ import json
 import logging
 import math
 from pathlib import Path
+import signal
 import sys
 from tempfile import NamedTemporaryFile
 from threading import Event, Thread
@@ -101,6 +102,13 @@ def _gain(value):
     return gain
 
 
+def _positive_count(value: str) -> int:
+    count = int(value)
+    if count <= 0:
+        raise argparse.ArgumentTypeError("count must be positive")
+    return count
+
+
 def _positive_seconds(value: str) -> float:
     try:
         seconds = float(value)
@@ -139,6 +147,10 @@ def main() -> None:
     parser.add_argument("--queue-max-chunks", type=int, default=64)
     parser.add_argument("--rtl-sdr-command", default="rtl_sdr", help="RTL executable path")
     parser.add_argument("--backend-url", help="Send full decoded events directly to FastAPI instead of stdout")
+    parser.add_argument("--delivery-max-events", type=_positive_count, default=256,
+                        help="Maximum pending events for live HTTP delivery")
+    parser.add_argument("--delivery-request-timeout-seconds", type=_positive_seconds, default=5.0)
+    parser.add_argument("--delivery-drain-timeout-seconds", type=_positive_seconds, default=10.0)
     parser.add_argument("--capture-id", help="Capture ID shared by events and metrics (default: generated ID)")
     parser.add_argument("--metrics-json", type=Path, help="Write a loss-funnel JSON report to this file")
     parser.add_argument("--metrics-interval-seconds", type=_positive_seconds,
@@ -169,7 +181,9 @@ def main() -> None:
         parser.error("--fixture has source synthetic")
 
     frames = chunks = stream = stats = None
-    metrics = metrics_file = telemetry = None
+    metrics = metrics_file = telemetry = delivery = None
+    interrupted = False
+    previous_sigint = None
     run_status = "failed"
     collect_metrics = args.metrics_json is not None or args.diagnostics
 
@@ -186,6 +200,16 @@ def main() -> None:
             from netradar.telemetry import TelemetrySender
             telemetry = TelemetrySender(args.backend_url, metrics)
             telemetry.start()
+
+    def request_stop(signum, frame):
+        nonlocal interrupted
+        interrupted = True
+
+    def check_consumer():
+        if interrupted:
+            raise KeyboardInterrupt
+        if delivery is not None:
+            delivery.check()
 
     try:
         if args.iq is not None or args.rtl_sdr:
@@ -204,12 +228,21 @@ def main() -> None:
                 if sample_rate != 2_000_000 or frequency != 1_090_000_000:
                     raise ValueError("DSP requires 2,000,000 S/s at 1090 MHz; device was not started")
                 stats = StreamStats()
+                if args.backend_url:
+                    from netradar.backend.live_delivery import LiveDelivery
+                    delivery = LiveDelivery(
+                        args.backend_url, metrics, capacity=args.delivery_max_events,
+                        request_timeout=args.delivery_request_timeout_seconds,
+                        drain_timeout=args.delivery_drain_timeout_seconds,
+                    )
+                    previous_sigint = signal.signal(signal.SIGINT, request_stop)
                 chunks = stream_rtlsdr(
                     sample_rate_hz=sample_rate, center_frequency_hz=frequency,
                     chunk_samples=args.chunk_samples, gain_db=args.gain_db,
                     ppm=args.ppm, device_index=args.device_index,
                     max_samples=args.max_samples, queue_max_chunks=args.queue_max_chunks,
                     rtl_sdr_cmd=args.rtl_sdr_command, stats=stats, metrics=metrics,
+                    check_consumer=check_consumer if delivery is not None else None,
                 )
             else:
                 source = args.source or replay_source(args.iq)
@@ -271,9 +304,16 @@ def main() -> None:
                 print(json.dumps(update, ensure_ascii=False, allow_nan=False), flush=True)
 
         decoder = ADSBDecoder(sample_rate_hz=sample_rate, capture_id=args.capture_id, metrics=metrics)
-        pipeline = DecoderPipeline(decoder=decoder, publish=publish)
-        for frame in frames:
-            pipeline.handle_frame(frame)
+        if delivery is not None:
+            for frame in frames:
+                for event in decoder.decode(frame):
+                    delivery.submit(event)
+                delivery.check()
+        else:
+            pipeline = DecoderPipeline(decoder=decoder, publish=publish)
+            for frame in frames:
+                pipeline.handle_frame(frame)
+        check_consumer()
         if args.rtl_sdr and args.max_samples is None:
             raise RuntimeError("Live RTL-SDR stream ended; check the receiver before restarting")
         run_status = "completed"
@@ -291,6 +331,20 @@ def main() -> None:
         if stats is not None and stats.pid is not None:
             print(f"RTL-SDR: received={stats.samples_received} emitted={stats.samples_emitted} "
                   f"dropped={stats.dropped_samples} exit={stats.returncode}", file=sys.stderr)
+        delivery_error = None
+        if delivery is not None:
+            try:
+                delivery.close()
+            except RuntimeError as exc:
+                delivery_error = exc
+                run_status = "failed"
+            else:
+                print(f"Aircraft HTTP: {delivery.summary()}", file=sys.stderr)
+            finally:
+                if previous_sigint is not None:
+                    signal.signal(signal.SIGINT, previous_sigint)
+        if interrupted and run_status == "completed":
+            run_status = "interrupted"
         if metrics is not None:
             metrics.finish(run_status)
         try:
@@ -301,6 +355,10 @@ def main() -> None:
         finally:
             if telemetry is not None:
                 telemetry.close()
+        if delivery_error is not None:
+            parser.exit(2, f"netradar.pipeline: {delivery_error}\n")
+    if run_status == "interrupted":
+        parser.exit(130, "netradar.pipeline: stopped\n")
 
 
 if __name__ == "__main__":

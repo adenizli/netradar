@@ -111,7 +111,7 @@ class LivePipelineTest(unittest.TestCase):
         self.assertEqual(received[2][1]["fields"]["callsign"], "KLM1023")
         report = json.loads(report_path.read_text())
         self.assertEqual(report["run_status"], "completed")
-        self.assertEqual(report["stages"]["delivery"]["counters"], {"accepted": 7, "rejected": 0})
+        self.assertEqual(report["stages"]["delivery"]["counters"], {"accepted": 7, "rejected": 0, "undelivered": 0, "unconfirmed": 0})
         self.assertEqual(report["stages"]["delivery"]["latency"]["sample_count"], 1)
         self.assertTrue(all(event["metadata"]["capture_id"] == report["capture_id"] for _, event in received))
         self.assertIn("dropped=0", result.stderr)
@@ -131,7 +131,11 @@ class LivePipelineTest(unittest.TestCase):
         self.assertIn("RTL-SDR:", result.stderr)
         report = json.loads(report_path.read_text())
         self.assertEqual(report["run_status"], "failed")
-        self.assertEqual(report["stages"]["delivery"]["counters"], {"accepted": 0, "rejected": 1})
+        counts = report["stages"]["delivery"]["counters"]
+        self.assertEqual(counts["accepted"], 0)
+        self.assertEqual(counts["rejected"], 0)
+        self.assertEqual(counts["unconfirmed"], 1)
+        self.assertEqual(sum(counts.values()), report["stages"]["decoder"]["counters"]["decoded_events"])
         self.assert_receiver_reaped()
 
     def test_ctrl_c_stops_reader_threads_and_receiver_process(self):

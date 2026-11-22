@@ -24,7 +24,7 @@ STAGE_COUNTERS = {
         "crc_rejected", "supported_tc", "unsupported_tc", "decoded_events",
         "cpr_successes", "cpr_failures",
     ),
-    "delivery": ("accepted", "rejected"),
+    "delivery": ("accepted", "rejected", "undelivered", "unconfirmed"),
     "display": ("fresh", "stale", "expired"),
 }
 _ACTIVITY_COUNTERS = {
@@ -38,9 +38,10 @@ _RATE_COUNTERS = {
     "acquisition": {"samples_per_second": ("complex_samples",)},
     "dsp": {"samples_per_second": ("samples",), "messages_per_second": ("demodulated_frames",)},
     "decoder": {"messages_per_second": ("decoded_events",)},
-    "delivery": {"messages_per_second": STAGE_COUNTERS["delivery"]},
+    "delivery": {"messages_per_second": ("accepted", "rejected")},
     "display": {"transitions_per_second": STAGE_COUNTERS["display"]},
 }
+_ACQUISITION_LATENCIES = ("queue_dwell_latency", "consumer_chunk_latency")
 _WINDOW_SECONDS = (60, 300, 900)
 # About 26% spacing, 1 microsecond to ~67 seconds. One overflow bucket.
 _LATENCY_BOUNDS_NS = tuple(round(1000 * 2 ** (step / 3)) for step in range(79))
@@ -117,7 +118,8 @@ class FunnelMetrics:
         self._measured: set[str] = set()
         self._last_activity_ns: dict[str, int] = {}
         self._latency = {stage: _LatencyHistogram() for stage in STAGE_COUNTERS}
-        self._latency_calls = {stage: count() for stage in STAGE_COUNTERS}
+        self._acquisition_latencies = {name: _LatencyHistogram() for name in _ACQUISITION_LATENCIES}
+        self._latency_calls = {name: count() for name in (*STAGE_COUNTERS, *_ACQUISITION_LATENCIES)}
         self._capture_head: int | None = None
         self._queue = {"depth": None, "high_water": None, "capacity": None}
         self._icao_capacity = icao_capacity
@@ -146,6 +148,12 @@ class FunnelMetrics:
 
     def elapsed_latency(self, started_ns: int | None) -> int | None:
         return None if started_ns is None else self._clock_ns() - started_ns
+
+    def observe_acquisition_latency(self, name: str, started_ns: int | None) -> None:
+        if started_ns is not None:
+            duration = self._clock_ns() - started_ns
+            with self._lock:
+                self._acquisition_latencies[name].record(duration)
 
     def observe(self, stage: str, *, counters: Mapping[str, int] | None = None,
                 duration_ns: int | None = None, head_sample_index: int | None = None,
@@ -247,6 +255,10 @@ class FunnelMetrics:
                     ),
                 }
             stages["acquisition"]["queue"] = self._queue.copy()
+            if self._queue["capacity"] is not None:
+                stages["acquisition"].update({
+                    name: histogram.snapshot() for name, histogram in self._acquisition_latencies.items()
+                })
             return {
                 "schema_version": "1.0",
                 "capture_id": self.capture_id,

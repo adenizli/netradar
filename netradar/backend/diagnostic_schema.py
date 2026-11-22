@@ -61,6 +61,8 @@ class Stage(StrictModel):
     last_activity_elapsed_seconds: Number | None
     last_activity_unix_ms: UInt | None
     queue: Queue | None = None
+    queue_dwell_latency: Latency | None = None
+    consumer_chunk_latency: Latency | None = None
 
 
 class Window(StrictModel):
