@@ -3,6 +3,7 @@
 import argparse
 from contextlib import redirect_stdout
 import json
+from math import comb
 from pathlib import Path
 import re
 import resource
@@ -35,13 +36,14 @@ class _EventSink:
 
 def _worker(options: list[str]) -> None:
     sys.path.insert(0, str(ROOT))
-    from netradar.pipeline import main
+    from netradar import pipeline
+    from netradar.dsp import detector  # noqa: F401 (preload NumPy and the CU8 power lookup)
 
     sys.argv = ["netradar.pipeline", *options]
     sink = _EventSink()
     began, cpu_started = time.monotonic(), time.process_time()
     with redirect_stdout(sink):
-        main()
+        pipeline.main()
     cpu = time.process_time() - cpu_started
     peak_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     print(json.dumps({
@@ -92,6 +94,20 @@ def _run(options: list[str], *, metrics_path: Path | None, input_samples: int) -
     return result
 
 
+def _median_interval(values: list[float]) -> list[float] | None:
+    """Smallest order-statistic interval with at least 95% median coverage."""
+    ordered = sorted(values)
+    size = len(ordered)
+    tail = 0
+    interval = None
+    for trim in range(size // 2):
+        tail += comb(size, trim)
+        if 2 * tail / 2**size > .05:
+            break
+        interval = [ordered[trim], ordered[-trim - 1]]
+    return interval
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     inputs = parser.add_mutually_exclusive_group(required=True)
@@ -122,6 +138,9 @@ def main() -> None:
         else:
             path = args.iq.resolve()
             input_samples = path.stat().st_size // 2
+            with path.open("rb") as capture:
+                while capture.read(1024 * 1024):
+                    pass  # Warm the file cache before measuring either mode.
             options += ["--iq", str(path)]
 
         pairs = []
@@ -144,13 +163,16 @@ def main() -> None:
     except (OSError, ValueError, RuntimeError) as exc:
         parser.exit(2, f"metrics_overhead: {exc}\n")
 
-    overhead = statistics.median(pair["relative_cpu_overhead_percent"] for pair in pairs)
+    pair_overheads = [pair["relative_cpu_overhead_percent"] for pair in pairs]
+    overhead = statistics.median(pair_overheads)
     print(json.dumps({
         "mode": "rtl_sdr" if args.rtl_sdr else "iq_replay",
         "pipeline_arguments": options,
         "enabled_metrics_report_interval_seconds": 1,
         "comparison": "median of paired relative process CPU seconds per million received samples",
+        "measurement_scope": "producer CLI after pipeline, DSP and NumPy imports through final shutdown",
         "relative_cpu_overhead_percent": overhead,
+        "median_relative_cpu_overhead_95_percent_interval": _median_interval(pair_overheads),
         "target_percent": TARGET_PERCENT,
         "target_met": overhead < TARGET_PERCENT,
         "pairs": pairs,

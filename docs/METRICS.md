@@ -106,10 +106,21 @@ and metrics-on captures at the same gain, rate and chunk size:
 ```
 
 The metrics-on runs write one JSON snapshot per second. Both modes send the
-same terminal JSONL through an in-process sink. Each run uses a fresh producer
-process and reports its CPU seconds, wall time, peak RSS, input samples, queue
-drops and decoded event count. The comparison takes the median paired CPU
-change per million received samples. The target is less than 5% additional
-producer CPU. Event traffic and drops can vary across adjacent live captures.
-Use `--iq CAPTURE.cu8` in place of `--rtl-sdr` to repeat the same input bytes
-for every run.
+same event JSONL through an in-process sink. Each run uses a fresh producer
+process, starts timing after the pipeline and DSP imports, and reports CPU
+seconds, wall time, peak RSS, input samples, queue drops and decoded event
+count. The comparison takes the median paired CPU change per million received
+samples. The target is less than 5% additional producer CPU. Event traffic
+and drops can vary across adjacent live captures.
+
+For a controlled comparison, replay the same IQ in both modes:
+
+```sh
+.venv/bin/python tools/metrics_overhead.py --iq CAPTURE.cu8 --pairs 6 \
+  > /tmp/netradar-overhead.json
+```
+
+The benchmark warms the input file cache once before the first pair.
+Six or more pairs also report a distribution-free median interval with at
+least 95% coverage under independent paired observations. The pair values
+remain in the output for inspection.
