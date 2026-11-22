@@ -1,0 +1,11 @@
+# Checks GitHub for a new main commit; started by netradar-update.timer.
+[Unit]
+Description=NetRadar auto-update from GitHub
+
+[Service]
+Type=oneshot
+WorkingDirectory=@ROOT@
+EnvironmentFile=-%h/.config/netradar.env
+ExecStart=/bin/bash "@ROOT@/scripts/pi_update.sh"
+# pip install can take several minutes on a Pi.
+TimeoutStartSec=15min

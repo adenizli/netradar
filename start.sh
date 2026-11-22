@@ -161,10 +161,37 @@ install_frontend() {
     fi
 }
 
+update_mac_checkout() {
+    # Fast-forward the Mac copy to GitHub main before launching, but only when it
+    # is safe: on main, no local edits, not diverged. Never touches other branches.
+    [[ -z "${NETRADAR_NO_SELF_UPDATE:-}" ]] || return 0
+    command -v git >/dev/null 2>&1 && [[ -e "$ROOT/.git" ]] || return 0
+    local branch
+    branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+    [[ "$branch" == "main" ]] || return 0
+    if ! git fetch --quiet origin main 2>/dev/null; then
+        info "GitHub'a ulaşılamadı; güncelleme kontrolü atlandı."
+        return 0
+    fi
+    [[ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]] || return 0
+    if ! git merge-base --is-ancestor HEAD origin/main; then
+        info "Yerel main GitHub'dan ayrışmış; otomatik güncelleme atlandı."
+        return 0
+    fi
+    if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+        info "Yerel değişiklik var; otomatik güncelleme atlandı (git pull --ff-only ile elle güncelle)."
+        return 0
+    fi
+    info "GitHub'da yeni sürüm var; Mac kopyası güncelleniyor..."
+    git merge --ff-only --quiet origin/main
+    exec env NETRADAR_NO_SELF_UPDATE=1 bash "$ROOT/start.sh"
+}
+
 run_mac() {
     need curl "curl gerekli."
     [[ "$(uname -s)" == "Darwin" ]] ||
         die "Varsayılan başlatma Mac içindir. Pi yalnızca --pi ile başlatılır."
+    update_mac_checkout
     install_frontend
     mkdir -p "$RUNTIME"
     TARGET="${NETRADAR_PI_TARGET:-netradar@netradar.local}"
@@ -187,19 +214,36 @@ run_mac() {
         -o ExitOnForwardFailure=yes -o ConnectTimeout=12 -f -N \
         -L 127.0.0.1:8000:127.0.0.1:8000 "$TARGET" ||
         die "Pi'ye SSH bağlantısı kurulamadı."
-    remote_start="if [ ! -d $quoted_dir/.git ]; then git clone https://github.com/adenizli/netradar.git $quoted_dir || exit 1; fi; git -C $quoted_dir pull --ff-only && cd $quoted_dir && exec env NETRADAR_SESSION_ID=$session NETRADAR_GAIN_DB=${NETRADAR_GAIN_DB:-35} bash start.sh --pi"
-    REMOTE_STOP="cd $quoted_dir && bash start.sh --stop-pi $session"
-    info "Pi'de backend ve RTL-SDR başlatılıyor..."
-    ssh -S "$SSH_SOCKET" -o ControlMaster=auto -o BatchMode=yes \
-        -T "$TARGET" "$remote_start" &
-    REMOTE_PID=$!
     local i
-    for i in $(seq 1 180); do
-        ready "$BACKEND/healthz" && break
-        kill -0 "$REMOTE_PID" 2>/dev/null || die "Pi başlatılamadı; loglara bak."
-        sleep 1
-    done
-    ready "$BACKEND/healthz" || die "Backend hazır değil; Pi loglarını kontrol et."
+    # If the always-on service (scripts/pi_install_service.sh) runs on the Pi, just
+    # attach to it: it updates itself from GitHub and keeps running after Ctrl+C.
+    if ssh -S "$SSH_SOCKET" -o ControlMaster=auto -o BatchMode=yes -T "$TARGET" \
+        'XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user is-enabled --quiet netradar.service' \
+        </dev/null >/dev/null 2>&1; then
+        ATTACHED=1
+        info "Pi'de NetRadar servisi kurulu (otomatik güncelleme açık); ona bağlanılıyor."
+        [[ -z "${NETRADAR_GAIN_DB:-}" ]] ||
+            info "Not: servis modunda gain Pi'deki ~/.config/netradar.env dosyasından okunur."
+        for i in $(seq 1 180); do
+            ready "$BACKEND/healthz" && break
+            sleep 1
+        done
+        ready "$BACKEND/healthz" ||
+            die "Pi servisi yanıt vermiyor; Pi'de: journalctl --user -u netradar -n 50"
+    else
+        remote_start="if [ ! -d $quoted_dir/.git ]; then git clone https://github.com/adenizli/netradar.git $quoted_dir || exit 1; fi; git -C $quoted_dir pull --ff-only && cd $quoted_dir && exec env NETRADAR_SESSION_ID=$session NETRADAR_GAIN_DB=${NETRADAR_GAIN_DB:-35} bash start.sh --pi"
+        REMOTE_STOP="cd $quoted_dir && bash start.sh --stop-pi $session"
+        info "Pi'de backend ve RTL-SDR başlatılıyor..."
+        ssh -S "$SSH_SOCKET" -o ControlMaster=auto -o BatchMode=yes \
+            -T "$TARGET" "$remote_start" &
+        REMOTE_PID=$!
+        for i in $(seq 1 180); do
+            ready "$BACKEND/healthz" && break
+            kill -0 "$REMOTE_PID" 2>/dev/null || die "Pi başlatılamadı; loglara bak."
+            sleep 1
+        done
+        ready "$BACKEND/healthz" || die "Backend hazır değil; Pi loglarını kontrol et."
+    fi
     info "Radar arayüzü başlatılıyor..."
     (cd frontend; export VITE_BACKEND_URL="$BACKEND"; \
         export VITE_LAUNCHER=1; \
@@ -215,13 +259,24 @@ run_mac() {
     open "$RADAR" >/dev/null 2>&1 || true
     while :; do
         kill -0 "$WEB_PID" 2>/dev/null || die "Frontend kapandı."
-        kill -0 "$REMOTE_PID" 2>/dev/null || die "Pi bağlantısı/alıcı kapandı."
+        if [[ -n "${ATTACHED:-}" ]]; then
+            ssh -S "$SSH_SOCKET" -O check "$TARGET" >/dev/null 2>&1 ||
+                die "Pi SSH tüneli koptu (Pi servisi çalışmaya devam ediyor)."
+        else
+            kill -0 "$REMOTE_PID" 2>/dev/null || die "Pi bağlantısı/alıcı kapandı."
+        fi
         sleep 1
     done
 }
 
 case "${1:-}" in
     --pi) run_pi ;;
+    --service)
+        # Started by the netradar.service systemd unit on the Pi.
+        NETRADAR_SESSION_ID="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+        export NETRADAR_SESSION_ID
+        run_pi
+        ;;
     --stop-pi) [[ -n "${2:-}" ]] && stop_pi "$2" ;;
     --help|-h)
         cat <<'HELP'
@@ -229,6 +284,8 @@ NetRadar tek komut (Mac -> Raspberry Pi + frontend)
   ./start.sh          Canlı RTL-SDR + backend + radar arayüzü
 Değişkenler: NETRADAR_PI_TARGET, NETRADAR_PI_DIR, NETRADAR_GAIN_DB
 Kapat: Ctrl+C
+Pi'de sürekli çalışma + GitHub'dan otomatik güncelleme (Pi'de bir kez):
+  bash scripts/pi_install_service.sh
 HELP
         ;;
     "") run_mac ;;

@@ -18,9 +18,10 @@ on-device real-air validation still requires the Raspberry Pi and dongle.
 Mac üzerinde NetRadar repo klasöründe:
 
 ```bash
-git pull --ff-only
 ./start.sh
 ```
+
+Mac kopyası `main` branch'indeyse, yerel değişiklik yoksa ve GitHub'dan ayrışmamışsa başlatıcı önce onu GitHub'daki `main`'e otomatik günceller (`git pull --ff-only`). Başka bir branch'te veya yerel değişiklik varken hiçbir şeye dokunmaz.
 
 Başlatıcı Pi'ye SSH ile bağlanır (varsayılan `netradar@netradar.local`); gerekirse Pi'deki repoyu klonlar/günceller ve Python bağımlılıklarını kurar. Pi üzerinde **RTL-SDR + FastAPI** başlar. Mac'te **SSH port tüneli** (`127.0.0.1:8000`) ve Vite (`127.0.0.1:5173`) açılır. Tarayıcı otomatik açılır ve arayüz doğrudan canlı alıcıya bağlanır (demo modu yoktur). **Ctrl+C** yalnızca bu oturumda başlatılan servisleri kapatır.
 
@@ -32,6 +33,34 @@ NETRADAR_GAIN_DB=33.8 ./start.sh                      # Alternatif alıcı kazan
 ```
 
 Pi repo konumu varsayılan `~/netradar` (`NETRADAR_PI_DIR` ile değiştirilebilir). Mac'te 8000 ve 5173 portları boş olmalı. Pi'deki mevcut değişiklikler `git pull --ff-only` işlemini engellerse silinmez; önce ilgili değişiklikleri düzenleyin. Daha ayrıntılı yöntem için [DSP entegrasyon](docs/DSP_INTEGRATION.md) belgesine bakın.
+
+### Pi'de sürekli çalışma ve GitHub'dan otomatik güncelleme
+
+Pi'ye **bir kez** SSH ile girip repo klasöründe (`~/netradar`, `main` branch'i):
+
+```bash
+bash scripts/pi_install_service.sh
+```
+
+Bu komut iki systemd *user* servisi kurar ve açılışta başlatır (gerekirse `sudo loginctl enable-linger` için şifre sorar):
+
+- `netradar.service`: RTL-SDR + FastAPI sürekli çalışır. Çökerse veya dongle takılı değilse 15 saniyede bir yeniden dener.
+- `netradar-update.timer`: 2 dakikada bir GitHub'daki `main`'e bakar. Yeni commit varsa `git pull --ff-only` yapar, `requirements*.txt` değiştiyse bağımlılıkları kurar ve servisi yeniden başlatır. Sadece `docs/`, `frontend/`, `tests/`, `fixtures/` veya `.md` değiştiyse alıcı yeniden başlatılmaz.
+- Yeni sürüm 2 dakika içinde `/healthz`'e cevap vermezse (veya hemen çökerse) **önceki commit'e geri döner** ve o commit'i tekrar denemez. Bir sonraki commit normal şekilde denenir. Güncellemeden önce de sistem sağlıklı değilse (ör. dongle takılı değil) geri dönüş yapılmaz.
+- Pi'de commit edilmemiş değişiklik varsa, Pi başka bir branch'teyse veya `main` ayrışmışsa güncelleme atlanır; hiçbir şey silinmez.
+
+Servis kuruluyken Mac'te `./start.sh` Pi'deki servise bağlanır, Pi'de ikinci bir alıcı başlatmaz. Ctrl+C sadece Mac tarafını kapatır, Pi çalışmaya devam eder. Servis modunda gain gibi ayarlar Pi'deki `~/.config/netradar.env` dosyasından okunur (ör. `NETRADAR_GAIN_DB=33.8`).
+
+```bash
+bash scripts/pi_install_service.sh --status     # servis, timer, son güncelleme logları
+journalctl --user -u netradar -f                # alıcı logları
+journalctl --user -u netradar-update            # güncelleme geçmişi
+systemctl --user start netradar-update.service  # beklemeden şimdi güncelle
+bash scripts/pi_install_service.sh --uninstall  # eski (sadece start.sh) moda dön
+```
+
+> Not: `main`'e push edilen her şey birkaç dakika içinde Pi'de çalışır. Bu yüzden `main`'e sadece PR ile ve testler geçtikten sonra merge edin.
+
 ## Decoder to backend delivery
 
 Every decoder event is now delivered to `AircraftStore` by `DecoderPipeline`.
