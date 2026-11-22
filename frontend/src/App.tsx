@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Check, ExternalLink, RadioTower, Settings2 } from "lucide-react";
 import type { Settings } from "./types";
+import { Diagnostics } from "./components/Diagnostics";
 import { TrafficSummary } from "./components/TrafficSummary";
 import { Notifications } from "./components/Notifications";
 import { RadarGlyph } from "./components/Brand";
@@ -71,7 +72,7 @@ export default function App() {
   const [composing, setComposing] = useState(false),
     [preview, setPreview] = useState<number | null>(null);
   const [focus, setFocus] = useState<{ id: string; key: number } | null>(null);
-  const { contacts, connection, rate, session } = useTraffic(
+  const { contacts, connection, rate, session, expirations } = useTraffic(
     settings.backendUrl,
   );
   const aircraft = useMemo(() => contacts.map((c) => c.aircraft), [contacts]);
@@ -126,13 +127,13 @@ export default function App() {
           </span>
         </a>
         <div className="header-right">
-          <div
-            className={`connection-pill ${!connected ? "disconnected" : ""}`}
-            title={connection.message}
-          >
-            <span className="live-dot" />
-            {connected ? "Alıcı bağlı" : "Bağlantı bekleniyor"}
-          </div>
+          <Diagnostics
+            key={settings.backendUrl}
+            backend={settings.backendUrl}
+            stream={connection.state}
+            contacts={contacts}
+            expirations={expirations}
+          />
           <Clock />
           <button
             className="header-settings icon-button"

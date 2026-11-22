@@ -73,3 +73,26 @@ label. Neither export contains raw IQ, individual ICAO addresses or
 Prometheus labels for capture IDs.
 
 Telemetry overhead on Raspberry Pi hardware has not been measured here.
+
+## Desktop operator panel
+
+Open **Tanı** in the desktop header. The receiver status and the aircraft
+WebSocket state are separate. The source and capture ID identify the metrics
+shown. A successful CRC with no resolved CPR position can leave the map empty
+while the receiver continues to decode messages such as callsigns.
+
+The funnel lists capture averages and cumulative counts. The charts show up to
+five minutes of interval sample and valid-frame rates, calculated from successive
+measurements. A backend or capture change starts new charts. The browser's
+position counts are scoped by the provenance of each position fix. Expired
+contacts count removals during the current browser session, attributed by the
+last event's capture when available. The producer's display transitions and the
+backend's lifetime HTTP outcomes have separate counters.
+
+For visual verification, open the dashboard at 1280×720 and 1440×900. Confirm
+that the radar layout remains available with **Tanı** closed. Open the panel,
+tab through it, verify that the cards and charts fit the width, and scroll to
+the resource cards. Press Escape and check focus returns to **Tanı**. With the
+backend API available but the receiver stopped, verify the receiver status is
+**Alıcı devre dışı** even when **Uçak veri akışı** is **Açık**. Stop the backend
+and verify the header changes to **Tanı API’si çevrimdışı**.

@@ -6,6 +6,7 @@ import type {
   Contact,
 } from "../types";
 import { connectLive } from "../data/live";
+import { contactCapture } from "../lib/displayDiagnostics";
 import { mergeContact, refreshContact } from "../lib/freshness";
 export { mergeContact } from "../lib/freshness";
 export function useTraffic(backend: string) {
@@ -16,12 +17,17 @@ export function useTraffic(backend: string) {
   }>({ state: "connecting", message: "Başlatılıyor…" });
   const [rate, setRate] = useState(0),
     [session, setSession] = useState(0);
+  const [expirations, setExpirations] = useState<ReadonlyMap<string, number>>(
+    new Map(),
+  );
   useEffect(() => {
     let stopped = false,
       dirty = true,
       count = 0,
       connected = false;
     const store = new Map<string, Contact>();
+    const expiredByCapture = new Map<string, number>();
+    setExpirations(new Map());
     setContacts([]);
     setRate(0);
     setSession((s) => s + 1);
@@ -58,6 +64,7 @@ export function useTraffic(backend: string) {
       status("offline", (e as Error).message);
     }
     const flush = setInterval(() => {
+      let expiryChanged = false;
       for (const [id, contact] of store) {
         const refreshed = refreshContact(contact, performance.now());
         if (refreshed !== contact) {
@@ -69,8 +76,19 @@ export function useTraffic(backend: string) {
         for (const [id, contact] of store)
           if (Date.now() - contact.receivedAt > 60_000) {
             store.delete(id);
+            const key = contactCapture(contact);
+            if (key) {
+              const total = expiredByCapture.get(key) ?? 0;
+              expiredByCapture.delete(key);
+              expiredByCapture.set(key, total + 1);
+              // Bound capture bookkeeping independently of the contact limit.
+              if (expiredByCapture.size > 16)
+                expiredByCapture.delete(expiredByCapture.keys().next().value!);
+              expiryChanged = true;
+            }
             dirty = true;
           }
+      if (expiryChanged) setExpirations(new Map(expiredByCapture));
       if (dirty) {
         setContacts([...store.values()]);
         dirty = false;
@@ -87,5 +105,5 @@ export function useTraffic(backend: string) {
       clearInterval(meter);
     };
   }, [backend]);
-  return { contacts, connection, rate, session };
+  return { contacts, connection, rate, session, expirations };
 }

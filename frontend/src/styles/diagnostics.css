@@ -1,0 +1,180 @@
+.diag-trigger {
+  padding: 6px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.diag-source {
+  font: 500 11px var(--mono);
+  border-left: 1px solid #546e5a;
+  padding-left: 8px;
+  color: #d3ebd5;
+}
+.diag-dialog {
+  width: min(1080px, calc(100vw - 64px));
+  max-height: calc(100dvh - 48px);
+  padding: 0;
+  border: 1px solid #4a6651;
+  border-radius: 10px;
+  background: var(--bg);
+  color: #e3eee5;
+}
+.diag-dialog::backdrop {
+  background: #040b08bf;
+}
+.diag-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 21px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.diag-titlebar h2 {
+  margin: 0;
+  font-size: 19px;
+}
+.diag-body {
+  padding: 18px 21px 23px;
+  display: grid;
+  gap: 18px;
+}
+.diag-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 38%);
+  gap: 20px;
+  align-items: start;
+  border: 1px solid var(--border);
+  padding: 14px;
+  border-radius: 7px;
+  background: var(--panel);
+}
+.diag-section h3,
+.diag-overview h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+}
+.diag-body p,
+.diag-capture {
+  margin: 0;
+  color: #b0c5b4;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.diag-body p + p {
+  margin-top: 6px;
+}
+.diag-capture {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.diag-capture strong {
+  color: var(--accent);
+  font: 600 12px var(--mono);
+}
+.diag-grid {
+  margin-top: 9px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+.diag-infrastructure {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.diag-card,
+.diag-chart {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 12px;
+}
+.diag-card h3 {
+  font-size: 13px;
+}
+.diag-stage-status {
+  color: #b9cfbe;
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+.diag-values {
+  margin: 0;
+}
+.diag-values > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 11px;
+  align-items: baseline;
+  padding: 5px 0;
+}
+.diag-values > div + div {
+  border-top: 1px solid var(--border);
+}
+.diag-values dt {
+  color: #b0c5b4;
+  font-size: 12px;
+  line-height: 1.3;
+}
+.diag-values dd {
+  margin: 0;
+  color: #edf6ed;
+  text-align: right;
+  font: 500 12px var(--mono);
+}
+.diag-values abbr {
+  text-decoration: none;
+  color: #b0c5b4;
+}
+.diag-card p {
+  border-top: 1px solid var(--border);
+  padding-top: 7px;
+  margin-top: 4px;
+}
+.diag-charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.diag-chart {
+  margin: 0;
+}
+.diag-chart figcaption,
+.diag-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.diag-chart figcaption strong {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+.diag-chart > svg,
+.diag-chart > p {
+  width: 100%;
+  height: 62px;
+  display: block;
+  margin: 4px 0;
+}
+.diag-chart > p {
+  display: grid;
+  place-items: center;
+}
+.diag-gridline,
+.diag-series {
+  fill: none;
+  stroke: #3b5243;
+  vector-effect: non-scaling-stroke;
+}
+.diag-series {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.diag-chart-axis {
+  color: #b0c5b4;
+  font-size: 11px;
+}
