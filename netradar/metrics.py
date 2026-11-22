@@ -41,7 +41,7 @@ _RATE_COUNTERS = {
     "delivery": {"messages_per_second": ("accepted", "rejected")},
     "display": {"transitions_per_second": STAGE_COUNTERS["display"]},
 }
-_ACQUISITION_LATENCIES = ("queue_dwell_latency", "consumer_chunk_latency")
+ACQUISITION_LATENCIES = ("queue_dwell_latency", "consumer_chunk_latency")
 _WINDOW_SECONDS = (60, 300, 900)
 # About 26% spacing, 1 microsecond to ~67 seconds. One overflow bucket.
 _LATENCY_BOUNDS_NS = tuple(round(1000 * 2 ** (step / 3)) for step in range(79))
@@ -118,10 +118,13 @@ class FunnelMetrics:
         self._measured: set[str] = set()
         self._last_activity_ns: dict[str, int] = {}
         self._latency = {stage: _LatencyHistogram() for stage in STAGE_COUNTERS}
-        self._acquisition_latencies = {name: _LatencyHistogram() for name in _ACQUISITION_LATENCIES}
-        self._latency_calls = {name: count() for name in (*STAGE_COUNTERS, *_ACQUISITION_LATENCIES)}
+        self._acquisition_latencies = {name: _LatencyHistogram() for name in ACQUISITION_LATENCIES}
+        self._latency_calls = {name: count() for name in (*STAGE_COUNTERS, *ACQUISITION_LATENCIES)}
         self._capture_head: int | None = None
-        self._queue = {"depth": None, "high_water": None, "capacity": None}
+        self._queues = {
+            stage: {"depth": None, "high_water": None, "capacity": None}
+            for stage in ("acquisition", "delivery")
+        }
         self._icao_capacity = icao_capacity
         self._last_icao_sample: OrderedDict[str, int] = OrderedDict()
         self._last_evicted_sample = -1
@@ -134,13 +137,14 @@ class FunnelMetrics:
                 raise ValueError("Metrics sample rate cannot change within a capture")
             self.sample_rate_hz = sample_rate_hz
 
-    def observe_queue(self, *, depth: int, capacity: int) -> None:
-        """Update live queue gauges at a mutation of the acquisition queue."""
+    def observe_queue(self, *, depth: int, capacity: int, stage: str = "acquisition") -> None:
+        """Update live queue gauges at a mutation of the named queue."""
         if type(depth) is not int or type(capacity) is not int or not 0 <= depth <= capacity or capacity == 0:
             raise ValueError("Queue depth must be an integer within the positive queue capacity")
         with self._lock:
-            self._queue.update(depth=depth, capacity=capacity,
-                               high_water=max(self._queue["high_water"] or 0, depth))
+            queue = self._queues[stage]
+            queue.update(depth=depth, capacity=capacity,
+                         high_water=max(queue["high_water"] or 0, depth))
 
     def begin_latency(self, stage: str) -> int | None:
         """Time the first and every 32nd operation per stage using a monotonic clock."""
@@ -254,8 +258,10 @@ class FunnelMetrics:
                         (self._started_unix_ns + activity_ns - self._started_ns) // 1_000_000
                     ),
                 }
-            stages["acquisition"]["queue"] = self._queue.copy()
-            if self._queue["capacity"] is not None:
+            stages["acquisition"]["queue"] = self._queues["acquisition"].copy()
+            if self._queues["delivery"]["capacity"] is not None:
+                stages["delivery"]["queue"] = self._queues["delivery"].copy()
+            if self._queues["acquisition"]["capacity"] is not None:
                 stages["acquisition"].update({
                     name: histogram.snapshot() for name, histogram in self._acquisition_latencies.items()
                 })

@@ -160,13 +160,13 @@ os.write(1, data[3072:])
                         time.sleep(0.001)
                     second = next(chunks)
 
-                def parts():
-                    yield first
-                    yield second
-                    resume.touch()
-                    yield from chunks
+                    def parts():
+                        yield first
+                        yield second
+                        resume.touch()
+                        yield from chunks
 
-                frames = list(detect_frames(parts(), source="synthetic", metrics=metrics))
+                    frames = list(detect_frames(parts(), source="synthetic", metrics=metrics))
         self.assertEqual([(frame.hex, frame.sample_index) for frame in frames], [(HEX, 1676)])
         stages = metrics.snapshot()["stages"]
         self.assertEqual(stages["acquisition"]["counters"]["queue_dropped_samples"], 512)

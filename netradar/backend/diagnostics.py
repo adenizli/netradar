@@ -2,7 +2,7 @@
 from collections import OrderedDict
 import time
 
-from netradar.metrics import STAGE_COUNTERS, _LATENCY_BOUNDS_NS
+from netradar.metrics import ACQUISITION_LATENCIES, STAGE_COUNTERS, _LATENCY_BOUNDS_NS
 
 MAX_BODY_BYTES = 64 * 1024
 STALE_SECONDS = 5
@@ -36,17 +36,29 @@ def validate_capture(capture):
             or not 0 <= queue["depth"] <= queue["high_water"] <= queue["capacity"]
         ):
             raise ValueError("Invalid queue gauges")
-        latency = stage["latency"]
-        previous_count = 0
-        bounds = [bound / 1e6 for bound in _LATENCY_BOUNDS_NS] + [None]
-        if [bucket["upper_bound_ms"] for bucket in latency["buckets"]] != bounds:
-            raise ValueError("Invalid histogram bounds")
-        for bucket in latency["buckets"]:
-            if bucket["count"] < previous_count:
-                raise ValueError("Invalid histogram buckets")
-            previous_count = bucket["count"]
-        if previous_count != latency["sample_count"]:
-            raise ValueError("Invalid histogram count")
+        for key, latency in _stage_latencies(stage):
+            if key != "latency" and name != "acquisition":
+                raise ValueError("Unexpected acquisition latency")
+            _validate_latency(latency)
+
+
+def _stage_latencies(stage):
+    for key in ("latency", *ACQUISITION_LATENCIES):
+        if (latency := stage.get(key)) is not None:
+            yield key, latency
+
+
+def _validate_latency(latency):
+    previous_count = 0
+    bounds = [bound / 1e6 for bound in _LATENCY_BOUNDS_NS] + [None]
+    if [bucket["upper_bound_ms"] for bucket in latency["buckets"]] != bounds:
+        raise ValueError("Invalid histogram bounds")
+    for bucket in latency["buckets"]:
+        if bucket["count"] < previous_count:
+            raise ValueError("Invalid histogram buckets")
+        previous_count = bucket["count"]
+    if previous_count != latency["sample_count"]:
+        raise ValueError("Invalid histogram count")
 
 
 def regressed(before, after):
@@ -67,11 +79,12 @@ def capture_progresses(before, after):
             return False
         if regressed(stage["last_activity_elapsed_seconds"], next_stage["last_activity_elapsed_seconds"]):
             return False
-        latency, next_latency = stage["latency"], next_stage["latency"]
-        if regressed(latency["sum_ms"], next_latency["sum_ms"]) or any(
-            regressed(a["count"], b["count"]) for a, b in zip(latency["buckets"], next_latency["buckets"])
-        ):
-            return False
+        for key, latency in _stage_latencies(stage):
+            next_latency = next_stage.get(key)
+            if next_latency is None or regressed(latency["sum_ms"], next_latency["sum_ms"]) or any(
+                regressed(a["count"], b["count"]) for a, b in zip(latency["buckets"], next_latency["buckets"])
+            ):
+                return False
     return True
 
 
@@ -210,9 +223,13 @@ def prometheus(report):
                 metric(f"{name}_{key}_total", value, "counter", labels)
             for key in ("samples_per_second", "messages_per_second", "transitions_per_second"):
                 metric(f"{name}_{key}", stage["throughput"][key], labels=labels)
-            latency = stage["latency"]
-            if latency["status"] == "measured":
-                base = f"netradar_{name}_latency_seconds"
+            if name == "delivery" and (queue := stage.get("queue")) is not None:
+                for key, value in queue.items():
+                    metric(f"delivery_queue_{key}", value, labels=labels)
+            for key, latency in _stage_latencies(stage):
+                if latency["status"] != "measured":
+                    continue
+                base = f"netradar_{name}_{key}_seconds"
                 lines.append(f"# TYPE {base} histogram")
                 for bucket in latency["buckets"]:
                     bound = bucket["upper_bound_ms"]

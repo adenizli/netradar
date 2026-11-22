@@ -62,6 +62,8 @@ when no later chunk arrives to show a gap. At 2 MS/s, chunk sizes of 8192,
 16384 and 32768 span 4.096, 8.192 and 16.384 ms, respectively. With the default
 64 chunks the corresponding maximum IQ queue holds 1, 2 and 4 MiB of CU8
 and covers approximately 0.26, 0.52 and 1.05 seconds of incoming RF.
+Live HTTP exposes the same gauges under `stages.delivery.queue` in pending
+events. An event in flight is tracked separately from the pending queue.
 
 The stage activity timestamp changes on acquired bytes, processed DSP samples,
 CRC-accepted decoder frames, delivery attempts, or display transitions,
@@ -71,8 +73,8 @@ starting wall clock.
 
 Throughput divides the relevant counters by total monotonic elapsed seconds.
 Acquisition and DSP report complex samples per second. DSP, decoder and
-delivery respectively report demodulated frames, decoded events and attempted
-confirmed HTTP results per second. Display uses transitions per second. Inapplicable or
+delivery respectively report demodulated frames, decoded events and confirmed
+HTTP results per second. Display uses transitions per second. Inapplicable or
 unavailable rates are null.
 
 Latency durations are measured with a monotonic clock and reported in
@@ -89,6 +91,8 @@ yielded chunk. DSP measures active chunk processing, excluding time suspended
 while the decoder and publisher run. Decoder measures the frame-to-event
 operation. Live producer delivery measures the background POST through receipt
 of response headers. The synchronous replay path also parses the response.
+The backend `/metrics` endpoint exposes the IQ queue dwell and consumer chunk
+histograms in seconds, and the delivery queue depth, capacity and high water.
 
 `distinct_icao_windows.windows_seconds` uses keys `60`, `300` and `900`.
 Each window counts ICAOs from CRC-clean or corrected DF17 frames, including

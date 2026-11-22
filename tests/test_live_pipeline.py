@@ -161,6 +161,9 @@ if {idle!r}:
         self.assertGreater(acquisition["queue_dwell_latency"]["sample_count"], 0)
         self.assertGreater(acquisition["consumer_chunk_latency"]["sample_count"], 0)
         self.assertEqual(stages["delivery"]["counters"]["accepted"], 42)
+        delivery_queue = stages["delivery"]["queue"]
+        self.assertGreater(delivery_queue["high_water"], 0)
+        self.assertEqual(delivery_queue["depth"], 0)
         self.assert_receiver_reaped()
 
     def test_stalled_http_drain_reports_unconfirmed_and_undelivered(self):
@@ -203,7 +206,9 @@ if {idle!r}:
         self.assertEqual(len(received), 1)
         report = json.loads(report_path.read_text())
         self.assertEqual(report["run_status"], "failed")
-        counters = report["stages"]["delivery"]["counters"]
+        delivery = report["stages"]["delivery"]
+        self.assertEqual(delivery["queue"], {"depth": 0, "high_water": 2, "capacity": 2})
+        counters = delivery["counters"]
         self.assertEqual(counters, {"accepted": 0, "rejected": 0, "undelivered": 3, "unconfirmed": 1})
         self.assertEqual(sum(counters.values()), report["stages"]["decoder"]["counters"]["decoded_events"])
         self.assert_receiver_reaped()
@@ -240,6 +245,23 @@ if {idle!r}:
         report = json.loads(report_path.read_text())
         self.assertEqual(report["run_status"], "interrupted")
         self.assertEqual(report["stages"]["delivery"]["counters"]["accepted"], 7)
+        self.assert_receiver_reaped()
+
+    def test_http_rejection_is_distinct_from_unconfirmed_transport_failure(self):
+        path = self.paced_executable(1)
+        report_path = self.directory / "metrics.json"
+        with receiver(status=422) as (url, received):
+            result = subprocess.run(self.live_command(
+                path, "--backend-url", url, "--max-samples", str(TOTAL_SAMPLES),
+                "--metrics-json", str(report_path),
+            ), cwd=ROOT, capture_output=True, text=True, timeout=4)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(len(received), 1)
+        report = json.loads(report_path.read_text())
+        counters = report["stages"]["delivery"]["counters"]
+        self.assertEqual(counters["rejected"], 1)
+        self.assertEqual(counters["unconfirmed"], 0)
+        self.assertEqual(sum(counters.values()), report["stages"]["decoder"]["counters"]["decoded_events"])
         self.assert_receiver_reaped()
 
     def test_backend_failure_stops_and_reaps_receiver(self):

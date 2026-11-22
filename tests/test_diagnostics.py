@@ -124,8 +124,14 @@ class DiagnosticsTest(unittest.TestCase):
         metrics.observe("acquisition", counters={"rf_bytes": 400, "complex_samples": 200,
                                                  "queue_dropped_samples": 20}, duration_ns=100_000)
         metrics.observe("decoder")
+        metrics.observe_queue(depth=3, capacity=7)
+        metrics.observe_queue(depth=1, capacity=7)
+        metrics.observe("delivery")
+        metrics.observe_queue(stage="delivery", depth=2, capacity=5)
+        metrics.observe_queue(stage="delivery", depth=0, capacity=5)
+        for name in ("queue_dwell_latency", "consumer_chunk_latency"):
+            metrics.observe_acquisition_latency(name, self.now * 10**9 - 100_000)
         payload = self.payload(metrics)
-        payload["capture"]["stages"]["acquisition"]["queue"] = {"depth": 1, "capacity": 7, "high_water": 3}
         with self.client() as client:
             self.assertEqual(client.post("/api/diagnostics", json=payload).status_code, 204)
             self.assertEqual(client.post("/api/events", json=position().to_dict()).status_code, 200)
@@ -141,6 +147,10 @@ class DiagnosticsTest(unittest.TestCase):
             self.assertIn('netradar_decoder_crc_clean_total{source="synthetic"} 0', body.text)
             self.assertIn('netradar_acquisition_latency_seconds_sum{source="synthetic"} 0.0001', body.text)
             self.assertIn('netradar_acquisition_latency_seconds_bucket{source="synthetic",le="+Inf"} 1', body.text)
+            for name in ("queue_dwell_latency", "consumer_chunk_latency"):
+                self.assertIn(f'netradar_acquisition_{name}_seconds_count{{source="synthetic"}} 1', body.text)
+            self.assertIn('netradar_delivery_queue_high_water{source="synthetic"} 2', body.text)
+            self.assertIn('netradar_delivery_queue_depth{source="synthetic"} 0', body.text)
             self.assertNotIn("netradar_dsp_samples_total", body.text)
             self.assertNotIn(metrics.capture_id, body.text)
             self.assertNotIn("icao=", body.text)

@@ -22,6 +22,8 @@ FREQUENCY = 1_090_000_000
 SNIPPET_PERIOD = 60
 SNIPPET_LENGTH = 2
 SNAPSHOT_INTERVAL = 5
+# Allow the pipeline to release rtl_sdr, drain aircraft HTTP and write final metrics.
+SHUTDOWN_GRACE_SECONDS = 18
 
 
 def read_system_file(path):
@@ -144,7 +146,7 @@ def record(args, run, metadata):
             if pipeline.poll() is None:
                 pipeline.send_signal(signal.SIGINT)
                 try:
-                    pipeline.wait(timeout=8)
+                    pipeline.wait(timeout=SHUTDOWN_GRACE_SECONDS)
                 except subprocess.TimeoutExpired:
                     os.killpg(pipeline.pid, signal.SIGKILL)
                     pipeline.wait()
