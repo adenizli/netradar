@@ -62,6 +62,9 @@ ModeSFrame(
 
 DSP does NOT decode ICAO, position, callsign, etc. It estimates frame start and bytes.
 CRC verification belongs to decoder, although DSP may expose confidence metadata later.
+DSP reads up to `MAX_TIED_BITS` (2) half-bit pairs of exactly equal power as 0
+instead of dropping the candidate; the decoder's CRC decides whether that guess
+was right. Candidates with more ties are dropped.
 Initial scope: **112-bit DF17**. Other frames are out of MVP scope.
 
 `detect_frames(chunks, source="replay", capture_start_unix_ms=None)` yields these
@@ -120,6 +123,19 @@ sample rate and `capture_id`. A decoder instance assigns a capture identity;
 capture, source and sample rate. It refers to the same frame as `raw_frame` and its measurements. For
 a resolved CPR pair that is the newer message, even if its counterpart arrived
 late. Capture-relative sample indices do not create an absolute observation time.
+
+**Single-bit CRC repair (additive, still v1.1).** The decoder may repair a DF17
+frame whose CRC points to exactly one flipped bit, but only if the repaired ICAO
+sent a clean-CRC frame within the last 60 s of capture time (`KNOWN_ICAO_SECONDS`).
+Repaired frames never vouch for an aircraft themselves. For such an event:
+
+- `raw_frame` is the **repaired** frame and `metadata.crc_valid` is `true`;
+- `metadata.crc_corrected_bit` is the flipped bit index (0 = first bit, MSB-first);
+- `metadata.received_frame` is the frame exactly as received.
+
+Events from clean frames do not have these two keys. A resolved position event
+whose `raw_frame` is the other (newer) member of the CPR pair does not carry them
+either, even if the repaired frame completed the pair.
 
 Position events carry both `altitude_ft` (barometric) and `gnss_height_ft`
 (geometric), with the inapplicable one set to null. Velocity events distinguish

@@ -3,7 +3,12 @@
 `netradar.decoder.decode.ADSBDecoder` accepts `ModeSFrame` and returns a list of
 `DecodedEvent` objects. It requires Python 3.10+ and only the standard library.
 CRC-invalid frames, unsupported downlink formats, and unsupported type codes
-return an empty list. Event names remain unchanged. Contracts v1.1 adds optional
+return an empty list. The one exception is a single-bit CRC error on an aircraft
+heard with a clean CRC in the last 60 s of capture time: that frame is repaired
+and decoded, and its event carries `crc_corrected_bit` and `received_frame` in
+metadata (see [CONTRACTS.md](CONTRACTS.md), section C). Repaired frames never
+make an aircraft "known", so noise alone cannot create one. Event names remain
+unchanged. Contracts v1.1 adds optional
 `metadata` and lossless event JSON serialization; the fields below describe this
 decoder's payloads.
 
@@ -67,7 +72,8 @@ heading and true ground track.
 
 `DecodedEvent.to_dict()` / `to_json()` include the entire extensible `fields`
 object, raw hex, measured time (if available), and metadata containing DF, Type
-Code, CRC validity, source label, sample index and sample rate. The corresponding
+Code, CRC validity, source label, sample index and sample rate (plus the two
+repair keys above for single-bit-repaired frames). The corresponding
 `from_dict()` / `from_json()` methods preserve every field on receipt and accept
 legacy events without metadata. Wire events declare `schema_version: "1.1"`.
 

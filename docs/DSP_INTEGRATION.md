@@ -66,16 +66,24 @@ odaklanılabilir. Dosya bittiğinde yeni ölçüm gelmez; konumların eskimesi d
    Son kısa parça da teslim edilir. Tek kalan I/Q baytı bozuk dosya olarak reddedilir.
 2. **Güç hesabı:** I/Q baytları float'a çevrilir, 127.5 ofseti çıkarılır.
    `power = (I - 127.5)² + (Q - 127.5)²` hesaplanır. Matplotlib gerekmez.
+   Pi'de canlı 2 MS/s akışa yetişmek için bu değer her örnekte yeniden hesaplanmaz,
+   65536 girişli bir (I, Q) lookup table'dan okunur; sonuç aynıdır.
 3. **Preamble:** Mevcut 2 MS/s modeli, `[0, 2, 7, 9]` darbe konumları ve sessiz
    örneklerle karşılaştırma korunur. Yakın önceki bir yanlış aday gerçek başlangıcı
    bastırmaz; adayın doğruluğu CRC aşamasında kesinleşir.
 4. **PPM:** 16 örneklik preamble sonrası 112 bit için ikişer örnek karşılaştırılır.
-   İlk yarı güçlüyse 1, ikinci yarı güçlüyse 0 olur. Eşit/kararsız bitli aday
-   atlanır. Bitler MSB-first 14 bayta paketlenir.
+   İlk yarı güçlüyse 1, ikinci yarı güçlüyse 0 olur. Zayıf gerçek sinyallerde iki
+   yarının gücü tam eşit çıkabildiği için en fazla `MAX_TIED_BITS` (2) eşit bit 0
+   olarak okunur ve aday decoder'a geçer; doğru olup olmadığına CRC karar verir.
+   Daha fazla eşit biti olan aday atlanır (gürültüde genelde 10'dan fazla olur).
+   Adaylar toplu (vektörel) çözülür ve DF17 olmayanlar ilk 5 bitte elenir.
+   Bitler MSB-first 14 bayta paketlenir.
 5. **Sözleşme:** DF17 adayından uppercase hex, preamble'ın mutlak örnek indeksi,
    kaynak ve varsa gerçek zamanla `ModeSFrame` üretilir.
 6. **Decoder:** CRC, ICAO, çağrı adı, hız ve CPR çözümü mevcut decoder'da kalır.
-   DSP'den geçen bozuk CRC'li aday backend'e yayınlanmaz.
+   DSP'den geçen bozuk CRC'li aday backend'e yayınlanmaz. Tek istisna: son 60
+   saniyede temiz CRC ile duyulmuş bir uçağın tek bitlik hatası düzeltilir
+   (ayrıntı: [CONTRACTS.md](CONTRACTS.md), bölüm C).
 
 NumPy işlemleri için referanslar:
 [frombuffer](https://numpy.org/doc/2.2/reference/generated/numpy.frombuffer.html),
@@ -176,6 +184,14 @@ Kayıt dosyasındaki sidecar örnekleme hızı/frekansı korunur; desteklenmeyen
 2 MS/s varsayılarak işlenmez. Bilerek override etmek için `--sample-rate-hz` ve
 `--center-frequency-hz` verilebilir. Pipeline `replay_cu8(strict=True)` kullanır;
 `tools/iq_health.py` varsayılan uyarı/kırpma davranışıyla analiz yapabilir.
+
+Bir kayıtta mesajların hangi aşamada kaybolduğunu görmek için
+`tools/rf_funnel.py` her aşamayı sayar: preamble adayı → DF17 başlangıcı →
+en fazla 2 eşit bit → CRC (temiz / tek bitle düzeltilebilir / bozuk).
+
+```bash
+.venv/bin/python tools/rf_funnel.py capture.cu8
+```
 
 Arayüz farklı bilgisayardaysa backend'i Pi'nin LAN adresine bağlayıp arayüzde
 `http://<PI_LAN_IP>:8000` kullanın. İzinli frontend origin'ini
