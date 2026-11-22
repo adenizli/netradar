@@ -13,6 +13,25 @@ DSP detector, aircraft state/delivery, FastAPI transport and desktop UI are now
 implemented. Live RTL-SDR acquisition is connected to the same pipeline;
 on-device real-air validation still requires the Raspberry Pi and dongle.
 
+## Tek komutla başlatma (Mac + Raspberry Pi)
+
+Mac üzerinde NetRadar repo klasöründe:
+
+```bash
+git pull --ff-only
+./start.sh
+```
+
+Başlatıcı Pi'ye SSH ile bağlanır (varsayılan `netradar@netradar.local`); gerekirse Pi'deki repoyu klonlar/günceller ve Python bağımlılıklarını kurar. Pi üzerinde **RTL-SDR + FastAPI** başlar. Mac'te **SSH port tüneli** (`127.0.0.1:8000`) ve Vite (`127.0.0.1:5173`) açılır. Tarayıcı otomatik açılır ve arayüz doğrudan canlı alıcıya bağlanır (demo modu yoktur). **Ctrl+C** yalnızca bu oturumda başlatılan servisleri kapatır.
+
+İlk çalıştırma için Mac'te Node.js **22.12+ veya 24+**, npm, Python 3, SSH ve Pi'ye erişim; Pi'de Python 3, `rtl_sdr`, `curl`, `setsid` ve bağlı dongle gerekir. Backend Pi üzerinde yalnızca localhost'a bağlanır; LAN'a açık API portu gerekmiyor. SSH ve frontend işlemleri Mac üzerinde çalışır.
+
+```bash
+NETRADAR_PI_TARGET=netradar@192.168.0.120 ./start.sh  # IP ile SSH
+NETRADAR_GAIN_DB=33.8 ./start.sh                      # Alternatif alıcı kazancı
+```
+
+Pi repo konumu varsayılan `~/netradar` (`NETRADAR_PI_DIR` ile değiştirilebilir). Mac'te 8000 ve 5173 portları boş olmalı. Pi'deki mevcut değişiklikler `git pull --ff-only` işlemini engellerse silinmez; önce ilgili değişiklikleri düzenleyin. Daha ayrıntılı yöntem için [DSP entegrasyon](docs/DSP_INTEGRATION.md) belgesine bakın.
 ## Decoder to backend delivery
 
 Every decoder event is now delivered to `AircraftStore` by `DecoderPipeline`.

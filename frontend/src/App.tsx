@@ -12,6 +12,8 @@ import { useTraffic } from "./hooks/useTraffic";
 import { useZones } from "./hooks/useZones";
 import { hasPosition } from "./lib/geo";
 import { membersInZone } from "./lib/geofence";
+// Set by start.sh, which also passes the backend address in VITE_BACKEND_URL.
+const FROM_LAUNCHER = import.meta.env.VITE_LAUNCHER === "1";
 const DEFAULT_SETTINGS: Settings = {
   receiver: [41.085, 29.051],
   stationName: "İstanbul · Boğaziçi",
@@ -36,7 +38,10 @@ function readSettings(): Settings {
       Math.abs(s.receiver[0]) <= 85 &&
       Math.abs(s.receiver[1]) <= 180
     )
-      return s;
+      // In launcher mode, do not retain a stale backend URL from localStorage.
+      return FROM_LAUNCHER
+        ? { ...s, backendUrl: DEFAULT_SETTINGS.backendUrl }
+        : s;
   } catch {
     /* Defaults work with unavailable storage. */
   }

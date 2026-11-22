@@ -12,3 +12,6 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/*.tsbuildinfo
 frontend/.env.local
+
+# One-command launcher state
+.netradar-run/
