@@ -65,6 +65,38 @@ bash scripts/pi_install_service.sh --uninstall  # eski (sadece start.sh) moda d�
 
 > Not: `main`'e push edilen her şey birkaç dakika içinde Pi'de çalışır. Bu yüzden `main`'e sadece PR ile ve testler geçtikten sonra merge edin.
 
+### Elektrik kesintisinden sonra kendiliğinden açılma ve olay kaydı
+
+Aynı kurulum komutu (`bash scripts/pi_install_service.sh`, sudo şifresini bir kez sorar) Pi'yi elektrik gidip gelince kendi kendine ayağa kalkacak hale getirir:
+
+- Elektrik geri gelince Pi 4 kendiliğinden açılır. Linger sayesinde alıcı ve otomatik güncelleme kimse giriş yapmadan başlar. Dongle hazır değilse alıcı 15 saniyede bir yeniden dener.
+- **Donanım watchdog'u**: sistem donarsa Pi ~15 saniye içinde kendiliğinden yeniden başlar (`NETRADAR_NO_WATCHDOG=1` ile atlanır).
+- **Kalıcı journal** (en fazla 100 MB): sistem logları elektrik kesintisinde silinmez.
+- Kurulum sonunda açılış güvenliği kontrol edilir ve raporlanır: `fsck.repair=yes` (kesintiden sonra dosya sistemi onarımı), saat senkronizasyonu, ağ profillerinin otomatik bağlanması. Bunlar otomatik değiştirilmez, eksikse ne yapılacağı yazılır.
+- **`netradar-monitor.service`** (sistem servisi, sadece standart Python): olayları `~/netradar-logs/` klasörüne yazar.
+
+| Dosya | İçerik |
+|---|---|
+| `olaylar.log` | Her olay bir satır, Türkçe: `2026-11-22 20:14:22  ⚡ ELEKTRİK KESİNTİSİ ... kapalı kalma ≈ 13 dk` |
+| `rapor.md` | Son 30 günün özeti (kesinti sayıları, toplam süreler) ve son 40 olay |
+| `events.jsonl` | Aynı olaylar, makine için |
+
+Kaydedilen olaylar:
+
+- **⚡ Elektrik kesintisi veya zorla kapanma**: Pi düzgün kapanmadan durduysa (elektrik gitti, fiş çekildi, adaptör sorunu veya donma; yazılım bunları birbirinden ayıramaz), açıldıktan sonra son sinyal saati, açılış saati ve kapalı kalma süresi yazılır. Açılışta modem çalışıyorsa "muhtemelen sadece Pi'nin elektriği kesildi", internet ancak birkaç dakika sonra geldiyse "büyük ihtimalle binanın elektriği kesildi" notu eklenir.
+- **🔌 Düzgün kapatma / yeniden başlatma**: kim yaptı (`sudo reboot` çalıştıran kullanıcı, güç düğmesi, otomatik sistem güncellemesi) ve ne kadar kapalı kaldı.
+- **🌐 İnternet**: ağ bağlantısı yok / modeme ulaşılamıyor / modem açık ama internet yok / DNS çalışmıyor; ne zaman gitti, ne zaman geldi, ne kadar sürdü. Bir kesinti için art arda iki kötü kontrol (≈1 dk) gerekir.
+- **🪫 Düşük voltaj** ve **🌡️ işlemci yavaşlatması** (Pi firmware'inin bildirdiği): zayıf adaptörün habercisi.
+- **📡 Alıcı**: servis durdu, IQ gelmiyor (dongle takılı mı?), yazılım yanıt vermiyor; ve geri gelmesi.
+
+Pi'de pil/RTC olmadığı için elektrik kesintisinden sonra saat, internetten senkronize olana kadar yanlıştır. İzleyici bu süredeki olayları bekletir ve saat düzeldiğinde doğru zamanla yazar. 15 dakika içinde senkron olmazsa "saat doğrulanamadı" notuyla yazar.
+
+```bash
+bash scripts/pi_install_service.sh --events   # Pi'de rapor
+./start.sh --events                           # Mac'ten rapor (SSH ile)
+tail -f ~/netradar-logs/olaylar.log           # Pi'de canlı izle
+```
+
 ## Decoder to backend delivery
 
 Every decoder event is now delivered to `AircraftStore` by `DecoderPipeline`.

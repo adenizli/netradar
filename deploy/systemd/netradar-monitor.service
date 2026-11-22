@@ -1,0 +1,24 @@
+# NetRadar station monitor (system service): logs power cuts, shutdowns, internet outages,
+# under-voltage and receiver state to @LOGDIR@/olaylar.log and rapor.md.
+# Install with: bash scripts/pi_install_service.sh  (placeholders are filled in by the script)
+[Unit]
+Description=NetRadar station monitor (power, shutdown and internet event log)
+# Started after the journal so that, at shutdown, it is stopped while journald still runs
+# and can still read who asked for the shutdown. It does not wait for NTP: it tracks clock
+# sync itself so it can also log the network coming back after a power cut.
+After=systemd-journald.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=@USER@
+@GROUPS_LINE@
+WorkingDirectory=@ROOT@
+# System Python and standard library only: keeps logging even if the venv breaks.
+ExecStart=/usr/bin/python3 "@ROOT@/tools/station_monitor.py" --log-dir "@LOGDIR@"
+TimeoutStopSec=15
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
