@@ -23,7 +23,7 @@ wait_for_exit() {
 }
 
 stop_pi() {
-    local requested="$1" actual="" pid="" args=""
+    local requested="$1" actual="" pid="" args="" attempt
     [[ -f "$PI_STATE/session" && -f "$PI_STATE/pid" ]] || return 0
     read -r actual < "$PI_STATE/session"
     [[ "$actual" == "$requested" ]] || return 0
@@ -33,7 +33,13 @@ stop_pi() {
     # Do not kill an unrelated process in case a PID was reused.
     if [[ "$args" == *"start.sh --pi"* ]] && kill -TERM "$pid" 2>/dev/null; then
         # Keep the SSH connection open while the remote launcher drains delivery.
-        wait_for_exit "$pid" 120 || true
+        for ((attempt = 0; attempt < 120; attempt++)); do
+            if ! read -r actual 2>/dev/null < "$PI_STATE/session" || [[ "$actual" != "$requested" ]] ||
+                    ! kill -0 "$pid" 2>/dev/null; then
+                return 0
+            fi
+            sleep 0.2
+        done
     fi
 }
 
