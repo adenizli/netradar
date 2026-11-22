@@ -393,12 +393,14 @@ def _pump_samples(stdout, block_bytes, limit_bytes, chunks, stop, done, state, m
             try:
                 chunks.put_nowait((index, data))
             except queue.Full:
-                if not dropped_in_episode:
+                first_drop = dropped_in_episode == 0
+                if first_drop:
                     log.warning("IQ queue full (consumer too slow); dropping samples from index %d", index)
                 dropped_in_episode += n
                 state.dropped += n
                 if metrics is not None:
                     metrics._record("acquisition", counters={
+                        "queue_drop_events": int(first_drop),
                         "queue_dropped_chunks": 1, "queue_dropped_samples": n,
                     })
             else:

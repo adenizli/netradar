@@ -40,8 +40,11 @@ capture, with `source` identifying RF, replay or synthetic input.
 `backend.accepted` and `backend.rejected` count aircraft ingestion HTTP outcomes
 over the backend process lifetime, independently of producer delivery attempts.
 
-`queue` exposes nullable depth, capacity and high watermark in chunks and the
-capture-wide fraction of acquired samples discarded by the live queue.
+`queue` exposes nullable depth, capacity and high watermark in chunks, current
+`fill_ratio`, and capture-wide `drop_fraction` and `dropped_samples_per_second`.
+The latter divides dropped complex samples by monotonic capture seconds.
+`capture.stages.acquisition.counters.queue_drop_events` counts each run of
+consecutive drops once and is absent on older producers.
 `resources.producer` is null before the first heartbeat. Producer and backend
 resource reports include cumulative process CPU seconds, current and peak RSS
 bytes, host temperature in Celsius and the Pi throttling bit mask where

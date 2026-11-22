@@ -238,11 +238,12 @@ class StreamTest(unittest.TestCase):
         self.assertGreater(stats.dropped_samples, 0)
         self.assertEqual(stats.samples_received, TOTAL_SAMPLES)
 
-        gaps = 0
+        gaps = gap_events = 0
         expected = 0
         for c in chunks:
             self.assertGreaterEqual(c.start_sample_index, expected)
             gaps += c.start_sample_index - expected
+            gap_events += c.start_sample_index > expected
             expected = c.start_sample_index + c.sample_count
             # Indices still point at the right place in the original stream.
             self.assertEqual(c.data, raw[2 * c.start_sample_index:2 * expected])
@@ -257,6 +258,7 @@ class StreamTest(unittest.TestCase):
         self.assertEqual(acquisition["counters"], {
             "rf_bytes": len(raw), "complex_samples": TOTAL_SAMPLES,
             "emitted_samples": stats.samples_emitted, "emitted_chunks": len(chunks),
+            "queue_drop_events": gap_events + (trailing > 0),
             "queue_dropped_chunks": (TOTAL_SAMPLES + 16383) // 16384 - len(chunks),
             "queue_dropped_samples": gaps + trailing,
         })

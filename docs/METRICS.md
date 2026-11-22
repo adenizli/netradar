@@ -48,7 +48,7 @@ snapshots of the same capture for interval counts.
 
 | Stage | Counter definitions |
 | --- | --- |
-| `acquisition` | `rf_bytes` read as CU8, `complex_samples` read as complete I/Q pairs, `emitted_samples` and `emitted_chunks` yielded, `queue_dropped_chunks` and `queue_dropped_samples` discarded when the live queue fills. |
+| `acquisition` | `rf_bytes` read as CU8, `complex_samples` read as complete I/Q pairs, `emitted_samples` and `emitted_chunks` yielded, `queue_drop_events` for runs of consecutive drops, `queue_dropped_chunks` and `queue_dropped_samples` discarded when the live queue fills. |
 | `dsp` | `samples` processed, `chunk_gaps` in input indices and their `gap_samples`, `preamble_candidates`, `df17_prefixes` among those candidates, `ppm_tied_rejects` among the DF17 prefixes, and `demodulated_frames` prepared for CRC validation. |
 | `decoder` | `frames` received, `supported_df` and `unsupported_df`; `crc_clean`, `crc_corrected_one_bit` confirmed by the existing repair policy, and `crc_rejected` among supported DF; `supported_tc` and `unsupported_tc` among CRC-accepted frames; `decoded_events` emitted. `cpr_successes` and `cpr_failures` count supported position inputs with a resolved or unresolved pair, including a missing or expired counterpart. |
 | `delivery` | Live HTTP counts `accepted` (successful HTTP status), `rejected` (4xx), `undelivered` (never sent), and `unconfirmed` (sent or attempted, with an unknown outcome). On shutdown these counts account for all decoded events. The synchronous replay path retains its accepted and rejected attempt counts. |

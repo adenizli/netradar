@@ -80,7 +80,7 @@ class PipelineMetricsTest(unittest.TestCase):
         stages = report["stages"]
         self.assertEqual(stages["acquisition"]["counters"], {
             "rf_bytes": 1_120_000, "complex_samples": 560_000, "emitted_samples": 560_000,
-            "emitted_chunks": 69, "queue_dropped_chunks": 0, "queue_dropped_samples": 0,
+            "emitted_chunks": 69, "queue_drop_events": 0, "queue_dropped_chunks": 0, "queue_dropped_samples": 0,
         })
         self.assertEqual(stages["dsp"]["counters"], {
             "samples": 560_000, "chunk_gaps": 0, "gap_samples": 0, "preamble_candidates": 774,

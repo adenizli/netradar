@@ -121,7 +121,9 @@ class DiagnosticsTest(unittest.TestCase):
 
     def test_prometheus_units_and_backend_counts(self):
         metrics = self.capture("synthetic", sample_rate_hz=2_000_000)
+        self.now += 2
         metrics.observe("acquisition", counters={"rf_bytes": 400, "complex_samples": 200,
+                                                 "queue_dropped_chunks": 2, "queue_drop_events": 1,
                                                  "queue_dropped_samples": 20}, duration_ns=100_000)
         metrics.observe("decoder")
         metrics.observe_queue(depth=3, capacity=7)
@@ -133,17 +135,29 @@ class DiagnosticsTest(unittest.TestCase):
             metrics.observe_acquisition_latency(name, self.now * 10**9 - 100_000)
         payload = self.payload(metrics)
         with self.client() as client:
+            legacy = deepcopy(payload)
+            legacy["capture"]["stages"]["acquisition"]["counters"].pop("queue_drop_events")
+            self.assertEqual(client.post("/api/diagnostics", json=legacy).status_code, 204)
+            payload["sequence"] = 2
+            invalid = deepcopy(payload)
+            invalid["capture"]["stages"]["acquisition"]["counters"]["queue_drop_events"] = 3
+            self.assertEqual(client.post("/api/diagnostics", json=invalid).status_code, 422)
             self.assertEqual(client.post("/api/diagnostics", json=payload).status_code, 204)
             self.assertEqual(client.post("/api/events", json=position().to_dict()).status_code, 200)
             self.assertEqual(client.post("/api/events", json={}).status_code, 422)
             report = client.get("/api/diagnostics")
             self.assertEqual(report.headers["cache-control"], "no-store")
-            self.assertEqual(report.json()["queue"]["drop_fraction"], 0.1)
+            queue = report.json()["queue"]
+            self.assertEqual(queue["drop_fraction"], 0.1)
+            self.assertEqual(queue["fill_ratio"], 1 / 7)
+            self.assertEqual(queue["dropped_samples_per_second"], 10)
             body = client.get("/metrics")
             self.assertIn("version=0.0.4", body.headers["content-type"])
             self.assertIn("netradar_backend_events_accepted_total 1", body.text)
             self.assertIn("netradar_backend_events_rejected_total 1", body.text)
             self.assertIn('netradar_acquisition_rf_bytes_total{source="synthetic"} 400', body.text)
+            self.assertIn('netradar_acquisition_queue_drop_events_total{source="synthetic"} 1', body.text)
+            self.assertIn('netradar_acquisition_queue_dropped_samples_per_second{source="synthetic"} 10.0', body.text)
             self.assertIn('netradar_decoder_crc_clean_total{source="synthetic"} 0', body.text)
             self.assertIn('netradar_acquisition_latency_seconds_sum{source="synthetic"} 0.0001', body.text)
             self.assertIn('netradar_acquisition_latency_seconds_bucket{source="synthetic",le="+Inf"} 1', body.text)

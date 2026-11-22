@@ -7,6 +7,7 @@ from netradar.metrics import ACQUISITION_LATENCIES, STAGE_COUNTERS, _LATENCY_BOU
 MAX_BODY_BYTES = 64 * 1024
 STALE_SECONDS = 5
 RETAINED_CAPTURES = 8
+_LEGACY_MISSING_COUNTERS = {"acquisition": {"queue_drop_events"}, "delivery": {"undelivered", "unconfirmed"}}
 
 
 def validate_capture(capture):
@@ -15,10 +16,9 @@ def validate_capture(capture):
     if capture["distinct_icao_windows"]["windows_seconds"].keys() != {"60", "300", "900"}:
         raise ValueError("Invalid ICAO windows")
     for name, stage in capture["stages"].items():
-        counters = set(stage["counters"])
-        if counters != set(STAGE_COUNTERS[name]) and not (
-            name == "delivery" and counters == {"accepted", "rejected"}
-        ):
+        counts = stage["counters"]
+        expected = set(STAGE_COUNTERS[name])
+        if counts.keys() != expected and counts.keys() != expected - _LEGACY_MISSING_COUNTERS.get(name, set()):
             raise ValueError("Invalid counter set")
         activity = stage["last_activity_elapsed_seconds"]
         wall = stage["last_activity_unix_ms"]
@@ -26,9 +26,11 @@ def validate_capture(capture):
             activity is not None and activity > capture["elapsed_seconds"]
         ):
             raise ValueError("Invalid activity time")
-        if stage["counters"].get("queue_dropped_samples", 0) > stage["counters"].get("complex_samples", 0):
+        if counts.get("queue_dropped_samples", 0) > counts.get("complex_samples", 0):
             raise ValueError("Dropped samples exceed acquired samples")
-        if stage["status"] == "unavailable" and (any(stage["counters"].values()) or activity is not None):
+        if counts.get("queue_drop_events", 0) > counts.get("queue_dropped_chunks", 0):
+            raise ValueError("Drop events exceed dropped chunks")
+        if stage["status"] == "unavailable" and (any(counts.values()) or activity is not None):
             raise ValueError("Unavailable stage has measurements")
         queue = stage.get("queue")
         if queue and queue["capacity"] is not None and (
@@ -148,7 +150,8 @@ class Diagnostics:
 
     def report(self, backend_resources, subscriber_count):
         age = capture = producer = last_iq = last_crc = None
-        queue = {"depth": None, "capacity": None, "high_watermark": None, "drop_fraction": None}
+        queue = dict.fromkeys(("depth", "capacity", "high_watermark", "fill_ratio",
+                               "drop_fraction", "dropped_samples_per_second"))
         if self._active is not None:
             update, received = self._active
             age = self._clock() - received
@@ -159,9 +162,14 @@ class Diagnostics:
             last_crc = crc["last_activity_unix_ms"]
             if gauges := iq.get("queue"):
                 queue.update(depth=gauges["depth"], capacity=gauges["capacity"], high_watermark=gauges["high_water"])
-            acquired = iq["counters"]["complex_samples"]
-            if iq["status"] == "measured" and acquired and queue["capacity"] is not None:
-                queue["drop_fraction"] = iq["counters"]["queue_dropped_samples"] / acquired
+            if queue["capacity"] is not None:
+                queue["fill_ratio"] = queue["depth"] / queue["capacity"]
+                if iq["status"] == "measured":
+                    dropped = iq["counters"]["queue_dropped_samples"]
+                    if acquired := iq["counters"]["complex_samples"]:
+                        queue["drop_fraction"] = dropped / acquired
+                    if elapsed := capture["elapsed_seconds"]:
+                        queue["dropped_samples_per_second"] = dropped / elapsed
         return {
             "schema_version": "1.0",
             "receiver_state": self._receiver_state(capture, age),

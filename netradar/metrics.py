@@ -13,7 +13,7 @@ _CAPTURE_ID = re.compile(r"[A-Za-z0-9_.:-]{1,96}")
 STAGE_COUNTERS = {
     "acquisition": (
         "rf_bytes", "complex_samples", "emitted_samples", "emitted_chunks",
-        "queue_dropped_chunks", "queue_dropped_samples",
+        "queue_drop_events", "queue_dropped_chunks", "queue_dropped_samples",
     ),
     "dsp": (
         "samples", "chunk_gaps", "gap_samples", "preamble_candidates", "df17_prefixes",
