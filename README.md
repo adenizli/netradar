@@ -154,6 +154,8 @@ dropped sample counters go to stderr. Without `--backend-url`, stdout stays JSON
 See [live setup, replay metadata and failure behavior](docs/DSP_INTEGRATION.md).
 For stage counters, sampled latency and ICAO windows, enable
 `--metrics-json /tmp/netradar-rf.json`. See the [loss-funnel report](docs/METRICS.md).
+Field measurements: [real-air baseline](docs/FIELD_BASELINE.md), and
+[RF audit, A/B comparison and gain/PPM sweep](docs/RF_CALIBRATION.md).
 
 ## Desktop radar interface
 
