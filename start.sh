@@ -80,8 +80,8 @@ run_pi() {
     curl --fail --silent "$BACKEND/healthz" >/dev/null 2>&1 &&
         die "8000 portunda bir backend zaten çalışıyor."
     info "FastAPI başlatılıyor (Pi localhost; erişim SSH tüneliyle)..."
-    .venv/bin/python -m uvicorn netradar.backend.server:app \
-        --host 127.0.0.1 --port 8000 --workers 1 &
+    NETRADAR_EXPECT_RECEIVER=1 .venv/bin/python -m uvicorn netradar.backend.server:app \
+        --host 127.0.0.1 --port 8000 --workers 1 --no-proxy-headers &
     API_PID=$!
     local attempt
     for attempt in $(seq 1 50); do
@@ -93,11 +93,15 @@ run_pi() {
     info "1090 MHz RTL-SDR alıcısı başlatılıyor..."
     # Isolate the subprocess group so rtl_sdr also stops at shutdown.
     setsid .venv/bin/python -m netradar.pipeline --rtl-sdr \
-        --gain-db "${NETRADAR_GAIN_DB:-35}" --backend-url "$BACKEND" &
+        --gain-db "${NETRADAR_GAIN_DB:-35}" --backend-url "$BACKEND" --diagnostics &
     SDR_PID=$!
     while :; do
         kill -0 "$API_PID" 2>/dev/null || die "Backend beklenmedik şekilde kapandı."
-        kill -0 "$SDR_PID" 2>/dev/null || die "SDR pipeline kapandı; loglara bak."
+        if [[ -n "$SDR_PID" ]] && ! kill -0 "$SDR_PID" 2>/dev/null; then
+            wait "$SDR_PID" 2>/dev/null || true
+            SDR_PID=""
+            info "SDR pipeline kapandı. Backend tanılama için açık kalacak."
+        fi
         sleep 1
     done
 }
