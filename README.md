@@ -119,6 +119,8 @@ needed; `--max-samples 10000000` limits a hardware check to five seconds at 2 MS
 Ctrl+C closes the producer and releases the dongle. Errors and received/emitted/
 dropped sample counters go to stderr. Without `--backend-url`, stdout stays JSONL.
 See [live setup, replay metadata and failure behavior](docs/DSP_INTEGRATION.md).
+For stage counters, sampled latency and ICAO windows, enable
+`--metrics-json /tmp/netradar-rf.json`. See the [loss-funnel report](docs/METRICS.md).
 
 ## Desktop radar interface
 

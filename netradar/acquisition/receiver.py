@@ -45,8 +45,12 @@ import warnings
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from netradar.contracts import IqChunk
+
+if TYPE_CHECKING:
+    from netradar.metrics import FunnelMetrics
 
 log = logging.getLogger(__name__)
 
@@ -90,6 +94,11 @@ def _sidecar_metadata(path: Path) -> dict:
     return meta if isinstance(meta, dict) else {}
 
 
+def replay_source(path: Path) -> str:
+    """Identify explicitly synthetic IQ by its sidecar."""
+    return "synthetic" if _sidecar_metadata(path).get("kind") == "synthetic_baseband_iq" else "replay"
+
+
 def replay_cu8(
     path,
     *,
@@ -97,6 +106,7 @@ def replay_cu8(
     sample_rate_hz: int | None = None,
     center_frequency_hz: int | None = None,
     strict: bool = False,
+    metrics: FunnelMetrics | None = None,
 ) -> Iterator[IqChunk]:
     """Stream a saved CU8 capture as contiguous ``IqChunk`` objects.
 
@@ -124,18 +134,26 @@ def replay_cu8(
         center_frequency_hz = meta.get("center_frequency_hz", DEFAULT_CENTER_FREQUENCY_HZ)
     _check_positive("sample_rate_hz", sample_rate_hz)
     _check_positive("center_frequency_hz", center_frequency_hz)
-    return _replay(path, chunk_samples, sample_rate_hz, center_frequency_hz, strict)
+    if metrics is not None:
+        if metrics.source == "rf":
+            raise ValueError("Saved IQ is replay or synthetic")
+        metrics.set_sample_rate(sample_rate_hz)
+        metrics.observe("acquisition")
+    return _replay(path, chunk_samples, sample_rate_hz, center_frequency_hz, strict, metrics)
 
 
 def _replay(path: Path, chunk_samples: int, sample_rate_hz: int, center_frequency_hz: int,
-            strict: bool = False) -> Iterator[IqChunk]:
+            strict: bool = False, metrics: FunnelMetrics | None = None) -> Iterator[IqChunk]:
     block_bytes = chunk_samples * 2
     index = 0
     with open(path, "rb") as f:
         if strict and fstat(f.fileno()).st_size % 2:
             raise ValueError("CU8 file ends with an unpaired I/Q byte")
         while True:
+            started = metrics.begin_latency("acquisition") if metrics is not None else None
             data = _read_full(f, block_bytes)
+            duration = metrics.elapsed_latency(started) if metrics is not None else None
+            raw_bytes = len(data)
             if len(data) % 2:
                 if strict:
                     raise ValueError("CU8 file ends with an unpaired I/Q byte")
@@ -145,10 +163,16 @@ def _replay(path: Path, chunk_samples: int, sample_rate_hz: int, center_frequenc
                     stacklevel=2,
                 )
                 data = data[:-1]
+            count = len(data) // 2
+            if metrics is not None and raw_bytes:
+                metrics.observe("acquisition", counters={
+                    "rf_bytes": raw_bytes, "complex_samples": count, "emitted_samples": count,
+                    "emitted_chunks": int(bool(data)),
+                }, duration_ns=duration, head_sample_index=index + count)
             if not data:
                 return
             yield IqChunk(data, index, sample_rate_hz, center_frequency_hz)
-            index += len(data) // 2
+            index += count
             if len(data) < block_bytes:
                 return
 
@@ -212,6 +236,24 @@ class _RateMonitor:
         return deficit / expected
 
 
+class _ObservedQueue(queue.Queue):
+    """Publish occupancy while the standard queue mutex protects the mutation."""
+
+    def __init__(self, capacity: int, metrics: FunnelMetrics):
+        super().__init__(capacity)
+        self._metrics = metrics
+        metrics.observe_queue(depth=0, capacity=capacity)
+
+    def _put(self, item):
+        super()._put(item)
+        self._metrics.observe_queue(depth=self._qsize(), capacity=self.maxsize)
+
+    def _get(self):
+        item = super()._get()
+        self._metrics.observe_queue(depth=self._qsize(), capacity=self.maxsize)
+        return item
+
+
 class _ReaderState:
     def __init__(self):
         self.received = 0
@@ -257,6 +299,7 @@ def stream_rtlsdr(
     rtl_sdr_cmd: str | Sequence[str] = "rtl_sdr",
     stats: StreamStats | None = None,
     queue_max_chunks: int = 64,
+    metrics: FunnelMetrics | None = None,
 ) -> Iterator[IqChunk]:
     """Stream live IQ from the ``rtl_sdr`` CLI (apt package ``rtl-sdr``).
 
@@ -299,6 +342,11 @@ def stream_rtlsdr(
         device_index=device_index,
         max_samples=max_samples,
     )
+    if metrics is not None:
+        if metrics.source == "replay":
+            raise ValueError("Live RTL-SDR uses source rf or a synthetic receiver")
+        metrics.set_sample_rate(sample_rate_hz)
+        metrics.observe("acquisition")
     return _stream(
         cmd,
         sample_rate_hz=sample_rate_hz,
@@ -307,10 +355,11 @@ def stream_rtlsdr(
         max_samples=max_samples,
         stats=stats if stats is not None else StreamStats(),
         queue_max_chunks=queue_max_chunks,
+        metrics=metrics,
     )
 
 
-def _pump_samples(stdout, block_bytes, limit_bytes, chunks, stop, done, state, monitor):
+def _pump_samples(stdout, block_bytes, limit_bytes, chunks, stop, done, state, monitor, metrics):
     """Reader thread: drain rtl_sdr stdout into ``chunks`` as (start_index, bytes)."""
     index = 0
     dropped_in_episode = 0
@@ -322,7 +371,13 @@ def _pump_samples(stdout, block_bytes, limit_bytes, chunks, stop, done, state, m
                 if want <= 0:
                     state.limit_reached = True
                     break
+            started = metrics.begin_latency("acquisition") if metrics is not None else None
             data = _read_full(stdout, want)
+            if metrics is not None and data:
+                count = len(data) // 2
+                metrics.observe("acquisition", counters={
+                    "rf_bytes": len(data), "complex_samples": count,
+                }, duration_ns=metrics.elapsed_latency(started), head_sample_index=index + count)
             if len(data) % 2:
                 log.warning("rtl_sdr output ended on an odd byte; dropping it")
                 data = data[:-1]
@@ -337,6 +392,10 @@ def _pump_samples(stdout, block_bytes, limit_bytes, chunks, stop, done, state, m
                     log.warning("IQ queue full (consumer too slow); dropping samples from index %d", index)
                 dropped_in_episode += n
                 state.dropped += n
+                if metrics is not None:
+                    metrics.observe("acquisition", counters={
+                        "queue_dropped_chunks": 1, "queue_dropped_samples": n,
+                    })
             else:
                 if dropped_in_episode:
                     log.warning(
@@ -390,8 +449,10 @@ def _rtl_sdr_error(cmd, message: str, tail) -> RuntimeError:
     return RuntimeError(f"{cmd[0]} {message}\nLast stderr lines:\n{lines}\n{TROUBLESHOOTING_HINT}")
 
 
-def _stream(cmd, *, sample_rate_hz, center_frequency_hz, chunk_samples, max_samples, stats, queue_max_chunks):
-    chunks: queue.Queue = queue.Queue(maxsize=queue_max_chunks)
+def _stream(cmd, *, sample_rate_hz, center_frequency_hz, chunk_samples, max_samples, stats,
+            queue_max_chunks, metrics):
+    chunks = (queue.Queue(queue_max_chunks) if metrics is None
+              else _ObservedQueue(queue_max_chunks, metrics))
     stop = threading.Event()
     reader_done = threading.Event()
     state = _ReaderState()
@@ -420,6 +481,7 @@ def _stream(cmd, *, sample_rate_hz, center_frequency_hz, chunk_samples, max_samp
             reader_done,
             state,
             _RateMonitor(sample_rate_hz),
+            metrics,
         ),
         name="netradar-rtl-reader",
         daemon=True,
@@ -447,6 +509,10 @@ def _stream(cmd, *, sample_rate_hz, center_frequency_hz, chunk_samples, max_samp
             stats.samples_emitted += chunk.sample_count
             stats.chunks_emitted += 1
             sync_stats()
+            if metrics is not None:
+                metrics.observe("acquisition", counters={
+                    "emitted_samples": chunk.sample_count, "emitted_chunks": 1,
+                })
             yield chunk
 
         if state.error is not None:

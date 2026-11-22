@@ -2,13 +2,63 @@
 import argparse
 from collections.abc import Callable
 import json
+import logging
 import math
 from pathlib import Path
 import sys
+from tempfile import NamedTemporaryFile
+from threading import Event, Thread
 
 from netradar.backend.state import AircraftStore
 from netradar.contracts import DecodedEvent, ModeSFrame
 from netradar.decoder.decode import ADSBDecoder
+from netradar.metrics import FunnelMetrics
+
+
+log = logging.getLogger(__name__)
+
+
+class _MetricsFile:
+    def __init__(self, path: Path, metrics: FunnelMetrics, interval: float | None):
+        self.path = path
+        self.metrics = metrics
+        self.interval = interval
+        self._stop = Event()
+        self._thread: Thread | None = None
+
+    def _write(self) -> None:
+        pending = None
+        try:
+            with NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent,
+                                    prefix=".netradar-metrics-", delete=False) as file:
+                pending = Path(file.name)
+                json.dump(self.metrics.snapshot(), file, allow_nan=False, separators=(",", ":"))
+                file.write("\n")
+            pending.replace(self.path)
+        finally:
+            if pending is not None:
+                pending.unlink(missing_ok=True)
+
+    def _report_periodically(self) -> None:
+        while not self._stop.wait(self.interval):
+            try:
+                self._write()
+            except OSError as exc:
+                log.warning("Could not write periodic metrics to %s: %s", self.path, exc)
+                return
+
+    def start(self) -> None:
+        self._write()
+        if self.interval is not None:
+            thread = Thread(target=self._report_periodically, name="netradar-metrics-file", daemon=True)
+            thread.start()
+            self._thread = thread
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join()
+        self._write()
 
 
 class DecoderPipeline:
@@ -52,6 +102,25 @@ def _gain(value):
     return gain
 
 
+def _positive_seconds(value: str) -> float:
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("interval must be a positive number of seconds") from None
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise argparse.ArgumentTypeError("interval must be a positive, finite number of seconds")
+    return seconds
+
+
+def _read_frames(stream, source_if_missing: str | None):
+    for line in stream:
+        if line.strip():
+            payload = json.loads(line)
+            if source_if_missing is not None and isinstance(payload, dict):
+                payload.setdefault("source", source_if_missing)
+            yield ModeSFrame(**payload)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     inputs = parser.add_mutually_exclusive_group()
@@ -71,23 +140,66 @@ def main() -> None:
     parser.add_argument("--queue-max-chunks", type=int, default=64)
     parser.add_argument("--rtl-sdr-command", default="rtl_sdr", help="RTL executable path")
     parser.add_argument("--backend-url", help="Send full decoded events directly to FastAPI instead of stdout")
+    parser.add_argument("--capture-id", help="Capture ID shared by events and metrics (default: generated ID)")
+    parser.add_argument("--metrics-json", type=Path, help="Write a loss-funnel JSON report to this file")
+    parser.add_argument("--metrics-interval-seconds", type=_positive_seconds,
+                        help="Refresh the report at this interval while running")
+    parser.add_argument("--diagnostics", action="store_true",
+                        help="Send producer heartbeat and loss-funnel metrics to the backend")
     args = parser.parse_args()
     if args.capture_start_unix_ms is not None and not (args.iq or args.rtl_sdr):
         parser.error("--capture-start-unix-ms applies only to --iq or --rtl-sdr")
     if args.max_samples is not None and not args.rtl_sdr:
         parser.error("--max-samples applies only to --rtl-sdr")
 
+    if args.diagnostics and not args.backend_url:
+        parser.error("--diagnostics requires --backend-url")
+    if args.metrics_interval_seconds is not None and args.metrics_json is None:
+        parser.error("--metrics-interval-seconds requires --metrics-json")
+    if args.metrics_json is not None:
+        input_paths = [path for path in (args.iq, args.fixture, args.input) if path is not None]
+        if args.iq is not None:
+            input_paths.append(args.iq.with_suffix(".json"))
+        if any(args.metrics_json.resolve() == path.resolve() for path in input_paths):
+            parser.error("--metrics-json must name a different file from the input or IQ sidecar")
+    if args.iq is not None and args.source == "rf":
+        parser.error("Saved IQ is replay or synthetic")
+    if args.rtl_sdr and args.source == "replay":
+        parser.error("Live RTL-SDR uses source rf or a synthetic receiver")
+    if args.fixture is not None and args.source not in (None, "synthetic"):
+        parser.error("--fixture has source synthetic")
+
     frames = chunks = stream = stats = None
+    metrics = metrics_file = telemetry = None
+    run_status = "failed"
+    collect_metrics = args.metrics_json is not None or args.diagnostics
+
+    def start_metrics(source: str) -> None:
+        nonlocal metrics, metrics_file, telemetry
+        if not collect_metrics:
+            return
+        metrics = FunnelMetrics(source, capture_id=args.capture_id)
+        if args.metrics_json is not None:
+            reporter = _MetricsFile(args.metrics_json, metrics, args.metrics_interval_seconds)
+            reporter.start()
+            metrics_file = reporter
+        if args.diagnostics:
+            from netradar.telemetry import TelemetrySender
+            telemetry = TelemetrySender(args.backend_url, metrics)
+            telemetry.start()
+
     try:
         if args.iq is not None or args.rtl_sdr:
             try:
-                from netradar.acquisition.receiver import StreamStats, replay_cu8, stream_rtlsdr
+                from netradar.acquisition.receiver import StreamStats, replay_cu8, replay_source, stream_rtlsdr
                 from netradar.dsp.detector import detect_frames
             except ModuleNotFoundError as exc:
                 if exc.name != "numpy":
                     raise
                 raise ValueError("IQ detection needs NumPy: install requirements-dsp.txt") from None
             if args.rtl_sdr:
+                source = args.source or "rf"
+                start_metrics(source)
                 sample_rate = args.sample_rate_hz if args.sample_rate_hz is not None else 2_000_000
                 frequency = args.center_frequency_hz if args.center_frequency_hz is not None else 1_090_000_000
                 if sample_rate != 2_000_000 or frequency != 1_090_000_000:
@@ -98,21 +210,25 @@ def main() -> None:
                     chunk_samples=args.chunk_samples, gain_db=args.gain_db,
                     ppm=args.ppm, device_index=args.device_index,
                     max_samples=args.max_samples, queue_max_chunks=args.queue_max_chunks,
-                    rtl_sdr_cmd=args.rtl_sdr_command, stats=stats,
+                    rtl_sdr_cmd=args.rtl_sdr_command, stats=stats, metrics=metrics,
                 )
-                source = args.source or "rf"
             else:
+                source = args.source or replay_source(args.iq)
+                start_metrics(source)
                 chunks = replay_cu8(
                     args.iq, chunk_samples=args.chunk_samples, sample_rate_hz=args.sample_rate_hz,
-                    center_frequency_hz=args.center_frequency_hz, strict=True,
+                    center_frequency_hz=args.center_frequency_hz, strict=True, metrics=metrics,
                 )
                 first = next(chunks, None)
-                sample_rate = first.sample_rate_hz if first is not None else (args.sample_rate_hz or 2_000_000)
-                source = args.source or "replay"
+                if metrics is not None:
+                    sample_rate = metrics.sample_rate_hz
+                else:
+                    sample_rate = first.sample_rate_hz if first is not None else (args.sample_rate_hz or 2_000_000)
                 chunks = _prepend(first, chunks)
-            frames = detect_frames(chunks, source=source,
+            frames = detect_frames(chunks, source=source, metrics=metrics,
                                    capture_start_unix_ms=args.capture_start_unix_ms)
         elif args.fixture is not None:
+            start_metrics("synthetic")
             metadata = json.loads(args.fixture.read_text())
             if metadata.get("kind") != "synthetic_baseband_iq":
                 raise ValueError("--fixture expects explicitly synthetic fixture metadata")
@@ -126,21 +242,44 @@ def main() -> None:
         else:
             sample_rate = args.sample_rate_hz if args.sample_rate_hz is not None else 2_000_000
             stream = args.input.open() if args.input is not None else sys.stdin
-            frames = (ModeSFrame(**json.loads(line)) for line in stream if line.strip())
+            frames = _read_frames(stream, args.source)
+            if args.source is not None:
+                start_metrics(args.source)
+            elif collect_metrics:
+                first = next(frames, None)
+                start_metrics(first.source if first is not None else "replay")
+                frames = _prepend(first, frames)
+
+        if metrics is not None and args.backend_url:
+            metrics.observe("delivery")
 
         def publish(update: dict) -> None:
             if args.backend_url:
                 from netradar.backend.forward import send_event
-                send_event(args.backend_url, DecodedEvent.from_dict(update["event"]))
+                event = DecodedEvent.from_dict(update["event"])
+                if metrics is None:
+                    send_event(args.backend_url, event)
+                    return
+                started = metrics.begin_latency("delivery")
+                outcome = "rejected"
+                try:
+                    send_event(args.backend_url, event)
+                    outcome = "accepted"
+                finally:
+                    metrics.observe("delivery", counters={outcome: 1},
+                                    duration_ns=metrics.elapsed_latency(started))
             else:
                 print(json.dumps(update, ensure_ascii=False, allow_nan=False), flush=True)
 
-        pipeline = DecoderPipeline(decoder=ADSBDecoder(sample_rate_hz=sample_rate), publish=publish)
+        decoder = ADSBDecoder(sample_rate_hz=sample_rate, capture_id=args.capture_id, metrics=metrics)
+        pipeline = DecoderPipeline(decoder=decoder, publish=publish)
         for frame in frames:
             pipeline.handle_frame(frame)
         if args.rtl_sdr and args.max_samples is None:
             raise RuntimeError("Live RTL-SDR stream ended; check the receiver before restarting")
+        run_status = "completed"
     except KeyboardInterrupt:
+        run_status = "interrupted"
         parser.exit(130, "netradar.pipeline: stopped\n")
     except (ValueError, TypeError, KeyError, OSError, RuntimeError) as exc:
         parser.exit(2, f"netradar.pipeline: {exc}\n")
@@ -153,6 +292,16 @@ def main() -> None:
         if stats is not None and stats.pid is not None:
             print(f"RTL-SDR: received={stats.samples_received} emitted={stats.samples_emitted} "
                   f"dropped={stats.dropped_samples} exit={stats.returncode}", file=sys.stderr)
+        if metrics is not None:
+            metrics.finish(run_status)
+        try:
+            if metrics_file is not None:
+                metrics_file.close()
+        except OSError as exc:
+            parser.exit(2, f"netradar.pipeline: could not write metrics: {exc}\n")
+        finally:
+            if telemetry is not None:
+                telemetry.close()
 
 
 if __name__ == "__main__":

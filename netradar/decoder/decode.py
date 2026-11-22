@@ -1,9 +1,13 @@
 """Ahmet + Ahmet Eren: implement Mode S / ADS-B protocol processing."""
 from dataclasses import dataclass, replace
 import math
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from netradar.contracts import ModeSFrame, DecodedEvent
+
+if TYPE_CHECKING:
+    from netradar.metrics import FunnelMetrics
 
 
 def crc24(data: bytes) -> int:
@@ -248,16 +252,22 @@ def decode_cpr_pair(even: ModeSFrame, odd: ModeSFrame) -> tuple[float, float] | 
     return latitude, longitude
 
 
+class _DecodeObservation:
+    def __init__(self):
+        self.counters = {"frames": 1}
+        self.icao: str | None = None
+
+
 class ADSBDecoder:
     """Decode one capture at a fixed sample rate; reset before a new capture."""
 
-    def __init__(self, *, sample_rate_hz: int = 2_000_000, capture_id: str | None = None):
+    def __init__(self, *, sample_rate_hz: int = 2_000_000, capture_id: str | None = None,
+                 metrics: "FunnelMetrics | None" = None):
         if sample_rate_hz <= 0:
             raise ValueError("Sample rate must be positive")
 
         if capture_id is not None and (not isinstance(capture_id, str) or not capture_id):
             raise ValueError("Capture identity must be a nonempty string")
-        self.capture_id = capture_id if capture_id is not None else uuid4().hex
         self._sample_rate_hz = sample_rate_hz
         self._max_pair_samples = 10 * sample_rate_hz
         self._known_icao_samples = KNOWN_ICAO_SECONDS * sample_rate_hz
@@ -265,10 +275,23 @@ class ADSBDecoder:
         self._cpr_frames: dict[tuple[str, str], dict[str, ModeSFrame]] = {}
         # ICAO -> sample index of its latest clean-CRC (uncorrected) frame.
         self._clean_icaos: dict[str, int] = {}
+        self._set_capture(capture_id, metrics)
 
-    def reset(self) -> None:
+    def _set_capture(self, capture_id: str | None, metrics: "FunnelMetrics | None") -> None:
+        if metrics is not None:
+            if capture_id is not None and capture_id != metrics.capture_id:
+                raise ValueError("Decoder and metrics capture IDs must match")
+            metrics.set_sample_rate(self._sample_rate_hz)
+            metrics.observe("decoder")
+            capture_id = metrics.capture_id
+        self.capture_id = capture_id if capture_id is not None else uuid4().hex
+        self._metrics = metrics
+
+    def reset(self, *, metrics: "FunnelMetrics | None" = None) -> None:
         """Start a new capture without carrying over old CPR messages."""
-        self.capture_id = uuid4().hex
+        if metrics is not None and metrics.capture_id == self.capture_id:
+            raise ValueError("Reset requires a new metrics capture")
+        self._set_capture(None, metrics)
         self._cpr_frames.clear()
         self._clean_icaos.clear()
         self._latest_sample_index = 0
@@ -351,7 +374,26 @@ class ADSBDecoder:
         sent a clean frame within KNOWN_ICAO_SECONDS; such events carry
         ``crc_corrected_bit`` and the original ``received_frame`` in metadata.
         """
+        metrics = self._metrics
+        if metrics is None:
+            return self._decode(frame)
+        if metrics.source != frame.source:
+            raise ValueError("Frame and metrics sources must match")
+        started = metrics.begin_latency("decoder")
+        observation = _DecodeObservation()
+        events = self._decode(frame, observation)
+        duration = metrics.elapsed_latency(started)
+        observation.counters["decoded_events"] = len(events)
+        metrics.observe("decoder", counters=observation.counters, duration_ns=duration,
+                        head_sample_index=frame.sample_index + 1, valid_icao=observation.icao,
+                        icao_sample_index=frame.sample_index)
+        return events
+
+    def _decode(self, frame: ModeSFrame, observation: _DecodeObservation | None = None) -> list[DecodedEvent]:
+        counters = observation.counters if observation is not None else None
         header = parse_header(frame)
+        if counters is not None:
+            counters["supported_df" if header.df == 17 else "unsupported_df"] = 1
         if header.df != 17:
             return []
 
@@ -360,6 +402,8 @@ class ADSBDecoder:
         if syndrome != 0:
             corrected = self._correct_single_bit(frame, syndrome)
             if corrected is None:
+                if counters is not None:
+                    counters["crc_rejected"] = 1
                 return []
             extra_metadata = {
                 "crc_corrected_bit": SINGLE_BIT_SYNDROMES[syndrome],
@@ -372,10 +416,15 @@ class ADSBDecoder:
             previous = self._clean_icaos.get(header.icao, frame.sample_index)
             self._clean_icaos[header.icao] = max(previous, frame.sample_index)
 
+        if observation is not None:
+            observation.counters["crc_corrected_one_bit" if syndrome else "crc_clean"] = 1
+            observation.icao = header.icao
         self._latest_sample_index = max(self._latest_sample_index, frame.sample_index)
         self._expire_cpr_frames()
 
         if header.type_code in (1, 2, 3, 4):
+            if counters is not None:
+                counters["supported_tc"] = 1
             callsign = decode_callsign(frame)
             if callsign is None:
                 return []
@@ -383,28 +432,35 @@ class ADSBDecoder:
             return [self._event(frame, "identification", {"callsign": callsign}, extra_metadata)]
 
         if header.type_code in range(9, 19) or header.type_code in (20, 21, 22):
+            if counters is not None:
+                counters["supported_tc"] = 1
             fields = decode_airborne_position(frame)
             cpr_format = "odd" if fields["cpr_format"] == "odd" else "even"
             altitude_source = "gnss" if header.type_code in (20, 21, 22) else "barometric"
             self._remember_position(header.icao, frame, cpr_format, altitude_source)
             position_frame = frame
             pair = self.get_cpr_pair(header.icao, altitude_source=altitude_source)
-            if pair is not None:
-                coordinates = decode_cpr_pair(*pair)
-                if coordinates is not None:
-                    # Keep altitude, raw CPR and raw_frame tied to the same time
-                    # as the coordinates, even if an older message arrives late.
-                    position_frame = max(pair, key=lambda item: item.sample_index)
-                    fields = decode_airborne_position(position_frame)
-                    fields["latitude"], fields["longitude"] = coordinates
+            coordinates = decode_cpr_pair(*pair) if pair is not None else None
+            if coordinates is not None:
+                # Keep altitude, raw CPR and raw_frame tied to the same time
+                # as the coordinates, even if an older message arrives late.
+                position_frame = max(pair, key=lambda item: item.sample_index)
+                fields = decode_airborne_position(position_frame)
+                fields["latitude"], fields["longitude"] = coordinates
+            if counters is not None:
+                counters["cpr_successes" if coordinates is not None else "cpr_failures"] = 1
             if position_frame is not frame:
                 extra_metadata = None  # the event describes the newer pair member
             return [self._event(position_frame, "airborne_position", fields, extra_metadata)]
 
         if header.type_code == 19:
+            if counters is not None:
+                counters["supported_tc"] = 1
             fields = decode_velocity_components(frame)
             if fields is None:
                 return []
             return [self._event(frame, "airborne_velocity", fields, extra_metadata)]
 
+        if counters is not None:
+            counters["unsupported_tc"] = 1
         return []

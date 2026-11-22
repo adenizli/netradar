@@ -98,28 +98,40 @@ class LivePipelineTest(unittest.TestCase):
 
     def test_live_cli_posts_events_directly_to_backend(self):
         path = self.fake_executable()
+        report_path = self.directory / "metrics.json"
         with receiver() as (url, received):
             result = subprocess.run(self.live_command(
                 path, "--max-samples", str(TOTAL_SAMPLES), "--backend-url", url,
+                "--metrics-json", str(report_path),
             ), cwd=ROOT, capture_output=True, text=True, timeout=10, check=True)
         self.assertEqual(result.stdout, "")
         self.assertEqual(len(received), 7)
         self.assertTrue(all(path == "/api/events" for path, event in received))
         self.assertTrue(all(event["metadata"]["source"] == "rf" for path, event in received))
         self.assertEqual(received[2][1]["fields"]["callsign"], "KLM1023")
+        report = json.loads(report_path.read_text())
+        self.assertEqual(report["run_status"], "completed")
+        self.assertEqual(report["stages"]["delivery"]["counters"], {"accepted": 7, "rejected": 0})
+        self.assertEqual(report["stages"]["delivery"]["latency"]["sample_count"], 1)
+        self.assertTrue(all(event["metadata"]["capture_id"] == report["capture_id"] for _, event in received))
         self.assertIn("dropped=0", result.stderr)
         self.assert_receiver_reaped()
 
     def test_backend_failure_stops_and_reaps_receiver(self):
         path = self.fake_executable(forever=True)
+        report_path = self.directory / "metrics.json"
         with socket.socket() as unavailable:
             unavailable.bind(("127.0.0.1", 0))  # Bound but deliberately not listening.
             url = f"http://127.0.0.1:{unavailable.getsockname()[1]}"
-            result = subprocess.run(self.live_command(path, "--backend-url", url),
+            result = subprocess.run(self.live_command(
+                path, "--backend-url", url, "--metrics-json", str(report_path)),
                                     cwd=ROOT, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 2)
         self.assertNotIn("Traceback", result.stderr)
         self.assertIn("RTL-SDR:", result.stderr)
+        report = json.loads(report_path.read_text())
+        self.assertEqual(report["run_status"], "failed")
+        self.assertEqual(report["stages"]["delivery"]["counters"], {"accepted": 0, "rejected": 1})
         self.assert_receiver_reaped()
 
     def test_ctrl_c_stops_reader_threads_and_receiver_process(self):
