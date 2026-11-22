@@ -46,8 +46,6 @@ class FieldBaselineTest(unittest.TestCase):
         tap = Path(__file__).resolve().parents[1] / "tools" / "rtl_field_tap.py"
         with tempfile.TemporaryDirectory() as temporary:
             run = Path(temporary)
-            snippets = run / "snippets"
-            snippets.mkdir()
             source = run / "fake-rtl-sdr"
             source.write_text(
                 f"#!{sys.executable}\nimport sys\n"
@@ -57,14 +55,18 @@ class FieldBaselineTest(unittest.TestCase):
                 encoding="utf-8",
             )
             source.chmod(0o700)
-            settings = {"directory": str(snippets), "executable": str(source),
-                        "capture_id": "field", "rate": 2_000_000, "frequency": 1_090_000_000,
-                        "period": 60, "length": 2, "slots": 30}
-            result = subprocess.run([sys.executable, str(tap), "-s", "2000000", "-n", "3600000000", "-"],
-                                    env=dict(os.environ, NETRADAR_FIELD_TAP=json.dumps(settings)),
-                                    check=True, capture_output=True, timeout=5)
-            self.assertEqual(result.stdout, bytes(range(8)))
-            self.assertEqual(list(snippets.glob("*.json")), [])
+            for native_limit in ([], ["-n", "3600000000"]):
+                with self.subTest(native_limit=native_limit):
+                    snippets = run / f"snippets-{len(native_limit)}"
+                    snippets.mkdir()
+                    settings = {"directory": str(snippets), "executable": str(source),
+                                "capture_id": "field", "rate": 2_000_000, "frequency": 1_090_000_000,
+                                "period": 60, "length": 2, "slots": 30, "max_samples": 3_600_000_000}
+                    result = subprocess.run([sys.executable, str(tap), "-s", "2000000", *native_limit, "-"],
+                                            env=dict(os.environ, NETRADAR_FIELD_TAP=json.dumps(settings)),
+                                            check=True, capture_output=True, timeout=5)
+                    self.assertEqual(result.stdout, bytes(range(8)))
+                    self.assertEqual(list(snippets.glob("*.json")), [])
 
     def test_coverage_uses_station_coordinates_and_distinguishes_empty_sectors(self):
         fixes = {("ABCDEF", 100): ((0.0, 1.0), 6_000), ("ABCDEF", 200): ((0.0, 2.0), 7_000)}

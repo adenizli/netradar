@@ -98,14 +98,16 @@ def capture_snapshot(metrics_path, backend_url, diagnostics):
 def record(args, run, metadata):
     snippets = run / "snippets"
     snippets.mkdir()
+    target_samples = SAMPLE_RATE * 60 * args.minutes
     env = dict(os.environ, NETRADAR_FIELD_TAP=json.dumps({
         "directory": str(snippets), "executable": args.rtl_sdr_command,
         "capture_id": metadata["capture_id"], "rate": SAMPLE_RATE, "frequency": FREQUENCY,
         "period": SNIPPET_PERIOD, "length": SNIPPET_LENGTH, "slots": args.minutes,
+        "max_samples": target_samples,
     }))
     metrics = run / "metrics-latest.json"
     cmd = [sys.executable, "-m", "netradar.pipeline", "--rtl-sdr",
-           "--max-samples", str(SAMPLE_RATE * 60 * args.minutes),
+           "--max-samples", str(target_samples),
            "--capture-id", metadata["capture_id"], "--metrics-json", str(metrics),
            "--metrics-interval-seconds", str(SNAPSHOT_INTERVAL),
            "--rtl-sdr-command", str(ROOT / "tools/rtl_field_tap.py"),

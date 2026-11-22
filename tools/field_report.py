@@ -126,7 +126,7 @@ def coverage(site, fixes):
     all_distances = []
     for (icao, _sample), (coords, altitude) in fixes.items():
         distance, bearing = polar(origin, coords)
-        key = (int(bearing // 30) * 30, altitude_bin(altitude))
+        key = (int(bearing // 30) % 12 * 30, altitude_bin(altitude))
         distances[key].append(distance)
         aircraft[key].add(icao)
         all_distances.append(distance)
@@ -174,7 +174,10 @@ def get_summary(run):
     final = metrics[-1] if metrics else {}
     start = datetime.fromisoformat(metadata["window"]["started_at"])
     observed, positioned, fixes, hourly = collect_aircraft(snapshots, capture_id, start)
+    backend_ok = sum("aircraft" in item for item in snapshots)
     positions = coverage(metadata["site"], fixes)
+    if backend_ok == 0:
+        positions["reason"] = "Aircraft snapshots were unavailable during this capture."
     clean = stage_counter(final, "decoder", "crc_clean")
     corrected = stage_counter(final, "decoder", "crc_corrected_one_bit")
     elapsed = final.get("elapsed_seconds")
@@ -193,7 +196,6 @@ def get_summary(run):
     sample_head = final.get("capture_head_sample_index")
     rate = final.get("sample_rate_hz")
     distinct = largest.get("count") if sample_head is not None and rate and sample_head <= 900 * rate else None
-    backend_ok = sum("aircraft" in item for item in snapshots)
     diagnostics = [sample["diagnostics"] for sample in snapshots
                    if sample.get("diagnostics", {}).get("capture_id") == capture_id]
     return {
@@ -239,6 +241,12 @@ def markdown(report):
     distinct_text = human(distinct) if distinct is not None else "unavailable from the final 15-minute metric window"
     if summary["distinct_valid_icao_lower_bound"]:
         distinct_text += " (lower bound at the metric capacity)"
+    diagnostics_lines = []
+    if meta["capture"].get("backend_diagnostics_requested"):
+        diagnostics_lines = [
+            f"Backend diagnostics yielded {diagnostics['matching_snapshots']} capture-matched samples and "
+            f"{diagnostics['failed_polls']} failed polls.", "",
+        ]
     lines = [
         f"# NetRadar field baseline {meta['capture_id']}", "",
         f"Collection status **{report['status']}**.", "",
@@ -265,6 +273,7 @@ def markdown(report):
           (", ".join(f"{key.replace('_', ' ')} {value}" for key, value in stage["counters"].items())
            if stage["status"] == "measured" else "Unavailable") + " |"
           for name, stage in metrics.get("stages", {}).items()], "",
+        *diagnostics_lines,
         "## Sampled CU8", "",
         f"{len(sampled['snippets'])} contiguous snippets cover {sampled['total_seconds']:.1f} s of raw RTL output. "
         "Each snippet has a capture sample offset and SHA-256 in the JSON report. "
@@ -272,11 +281,6 @@ def markdown(report):
         "| Offset (s) | IQ clip (%) | Peak/noise (dB) | Preambles | DF17 prefix | Tie rejects | Demodulated | Clean CRC | 1-bit fixable | Bad CRC |",
         "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
-    if meta["capture"].get("backend_diagnostics_requested"):
-        lines[lines.index("## Sampled CU8"):lines.index("## Sampled CU8")] = [
-            f"Backend diagnostics yielded {diagnostics['matching_snapshots']} capture-matched samples and "
-            f"{diagnostics['failed_polls']} failed polls.", "",
-        ]
     for snippet in sampled["snippets"]:
         health, funnel = snippet["iq_health"], snippet["funnel"]
         offset = snippet["start_sample_index"] / snippet["sample_rate_hz"]

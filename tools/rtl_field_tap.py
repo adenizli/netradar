@@ -60,6 +60,7 @@ def main():
     settings = json.loads(os.environ["NETRADAR_FIELD_TAP"])
     directory = Path(settings.pop("directory"))
     executable = settings.pop("executable")
+    max_samples = settings.pop("max_samples")
 
     def stop(signum, _frame):
         raise SystemExit(128 + signum)
@@ -67,11 +68,13 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     arguments = sys.argv[1:]
-    limit = arguments.index("-n")
-    max_samples = int(arguments[limit + 1])
     # rtl_sdr stores its -n limit in a 32-bit BYTE counter. Keep the
     # application-level sample limit for captures larger than 4 GiB.
-    del arguments[limit:limit + 2]
+    if "-n" in arguments:
+        limit = arguments.index("-n")
+        if int(arguments[limit + 1]) != max_samples:
+            raise ValueError("RTL-SDR and field relay sample limits differ")
+        del arguments[limit:limit + 2]
     command = [executable, *arguments]
     with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as receiver:
         diagnostics = Thread(target=copy_diagnostics, args=(receiver.stderr, directory.parent / "rtl-sdr.log"))
