@@ -88,7 +88,17 @@ Canlı RTL-SDR kaynağı da aynı hatta bağlıdır. Backend çalışırken Rasp
 Bu komut `stream_rtlsdr → detect_frames → decoder → POST /api/events` yolunu
 çalıştırır. `--backend-url` verildiğinde ayrıca forward pipe'ı gerekmez.
 `--max-samples 10000000` ile beş saniyelik test yapılabilir. Üretici Ctrl+C veya
-HTTP/cihaz hatasında dongle sürecini temizler; örnek sayaçları stderr'e yazılır.
+HTTP/cihaz hatasında dongle sürecini temizler ve örnek sayaçlarını stderr'e yazar.
+Canlı HTTP gönderimi çözümleyiciden ayrı bir iş parçacığında, üretim sırasıyla
+yapılır. Varsayılan sınır 256 bekleyen olay ve uçuşta bir istektir.
+`--delivery-max-events`, `--delivery-request-timeout-seconds` ve
+`--delivery-drain-timeout-seconds` bu sınırları ayarlar. Varsayılan soket
+zaman aşımı 5 saniye, kapanışta kuyruğu boşaltma sınırı 10 saniyedir.
+Örnek sınırına ulaşıldığında veya Ctrl+C ile durdurulduğunda üretici önce radyo
+sürecini kapatır, ardından bekleyen olayları gönderir. Kuyruk taşarsa, HTTP
+isteği başarısız olursa veya kapanış süresi dolarsa üretici hata koduyla çıkar.
+Stderr ve metrikler kabul edilen, reddedilen, hiç gönderilmeyen ve sonucu
+doğrulanamayan olayları ayrı sayar. Sonucu belirsiz istek otomatik tekrarlanmaz.
 Alıcı kaynağını yeniden başlatırken backend'i de yeniden başlatın; tarihsiz
 bağımsız capture oturumları aynı örnek saati sayılmaz.
 

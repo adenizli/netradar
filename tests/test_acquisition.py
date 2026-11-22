@@ -8,6 +8,7 @@ import time
 import unittest
 
 from netradar.acquisition.receiver import StreamStats, _RateMonitor, replay_cu8, stream_rtlsdr
+from netradar.metrics import FunnelMetrics
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / 'fixtures' / 'synthetic_adsb_2msps.cu8'
@@ -187,6 +188,12 @@ class StreamTest(unittest.TestCase):
         self.assertTrue(all(c.sample_rate_hz == 2_400_000 for c in chunks))
         self.assert_no_reader_threads()
 
+    def test_long_sample_limit_omits_overflowing_native_limit(self):
+        with self.assertRaisesRegex(RuntimeError, "expected 3600000000"):
+            list(stream_rtlsdr(rtl_sdr_cmd=self.fake_cmd(), max_samples=3_600_000_000))
+        self.assertNotIn("-n", self.args_out.read_text().splitlines())
+        self.assert_no_reader_threads()
+
     def test_startup_failure_raises_with_stderr(self):
         with self.assertRaises(RuntimeError) as ctx, \
                 self.assertLogs('netradar.acquisition.receiver', level='WARNING') as logs:
@@ -219,22 +226,24 @@ class StreamTest(unittest.TestCase):
 
     def test_overflow_drops_and_reports_gap(self):
         stats = StreamStats()
+        metrics = FunnelMetrics("synthetic")
         raw = FIXTURE.read_bytes()
         chunks = []
         # The fake writes ~16k samples every 10 ms; the consumer takes 50 ms per chunk.
         with self.assertLogs('netradar.acquisition.receiver', level='WARNING'):
             for c in stream_rtlsdr(rtl_sdr_cmd=self.fake_cmd('--write-size', '32768', '--delay', '0.01'),
-                                   chunk_samples=16384, queue_max_chunks=2, stats=stats):
+                                   chunk_samples=16384, queue_max_chunks=2, stats=stats, metrics=metrics):
                 chunks.append(c)
                 time.sleep(0.05)
         self.assertGreater(stats.dropped_samples, 0)
         self.assertEqual(stats.samples_received, TOTAL_SAMPLES)
 
-        gaps = 0
+        gaps = gap_events = 0
         expected = 0
         for c in chunks:
             self.assertGreaterEqual(c.start_sample_index, expected)
             gaps += c.start_sample_index - expected
+            gap_events += c.start_sample_index > expected
             expected = c.start_sample_index + c.sample_count
             # Indices still point at the right place in the original stream.
             self.assertEqual(c.data, raw[2 * c.start_sample_index:2 * expected])
@@ -242,6 +251,17 @@ class StreamTest(unittest.TestCase):
         trailing = stats.samples_received - expected
         self.assertEqual(gaps + trailing, stats.dropped_samples)
         self.assertEqual(stats.samples_emitted + stats.dropped_samples, stats.samples_received)
+        report = metrics.snapshot()
+        self.assertEqual(report["capture_head_sample_index"], TOTAL_SAMPLES)
+        acquisition = report["stages"]["acquisition"]
+        self.assertEqual(acquisition["queue"], {"depth": 0, "high_water": 2, "capacity": 2})
+        self.assertEqual(acquisition["counters"], {
+            "rf_bytes": len(raw), "complex_samples": TOTAL_SAMPLES,
+            "emitted_samples": stats.samples_emitted, "emitted_chunks": len(chunks),
+            "queue_drop_events": gap_events + (trailing > 0),
+            "queue_dropped_chunks": (TOTAL_SAMPLES + 16383) // 16384 - len(chunks),
+            "queue_dropped_samples": gaps + trailing,
+        })
 
 
 class RateMonitorTest(unittest.TestCase):

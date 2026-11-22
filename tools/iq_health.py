@@ -71,6 +71,20 @@ def summarize(hist):
     }
 
 
+def analyze(path, chunk_samples=262_144, on_chunk=None):
+    """Return the IQ health summary, with an optional callback for each chunk."""
+    engine, hist = make_histogrammer()
+    total = Counter()
+    rate = freq = None
+    for chunk in replay_cu8(path, chunk_samples=chunk_samples):
+        rate, freq = chunk.sample_rate_hz, chunk.center_frequency_hz
+        h = hist(chunk.data)
+        total.update(h)
+        if on_chunk is not None:
+            on_chunk(chunk, summarize(h))
+    return engine, rate, freq, summarize(total)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument('path')
@@ -78,23 +92,15 @@ def main(argv=None):
     p.add_argument('--per-chunk', action='store_true', help='also print one line per chunk')
     args = p.parse_args(argv)
 
-    engine, hist = make_histogrammer()
-    total = Counter()
-    rate = freq = None
+    def print_chunk(chunk, s):
+        print(f"{chunk.start_sample_index:>10} {s['samples']:>8} {s['mean_i']:>7.2f} {s['mean_q']:>7.2f}"
+              f" {s['clip_pct']:>7.3f} {s['median_mag']:>7.2f} {s['peak_mag']:>7.1f}"
+              f" {s['peak_to_noise_db']:>8.1f}")
+
     if args.per_chunk:
         print(f"{'start':>10} {'samples':>8} {'mean_I':>7} {'mean_Q':>7} {'clip%':>7}"
               f" {'median':>7} {'peak':>7} {'pk/n dB':>8}")
-    for chunk in replay_cu8(args.path, chunk_samples=args.chunk_samples):
-        rate, freq = chunk.sample_rate_hz, chunk.center_frequency_hz
-        h = hist(chunk.data)
-        total.update(h)
-        if args.per_chunk:
-            s = summarize(h)
-            print(f"{chunk.start_sample_index:>10} {s['samples']:>8} {s['mean_i']:>7.2f} {s['mean_q']:>7.2f}"
-                  f" {s['clip_pct']:>7.3f} {s['median_mag']:>7.2f} {s['peak_mag']:>7.1f}"
-                  f" {s['peak_to_noise_db']:>8.1f}")
-
-    s = summarize(total)
+    engine, rate, freq, s = analyze(args.path, args.chunk_samples, print_chunk if args.per_chunk else None)
     print(f"file:        {args.path}  ({engine})")
     if s is None:
         print('samples:     0 (empty capture)')

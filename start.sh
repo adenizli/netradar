@@ -13,8 +13,17 @@ die() { printf '[NetRadar] HATA: %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "'$1' bulunamadı. $2"; }
 ready() { curl --fail --silent --max-time 2 "$1" >/dev/null 2>&1; }
 
+wait_for_exit() {
+    local pid="$1" attempts="$2"
+    while kill -0 "$pid" 2>/dev/null; do
+        if (( attempts == 0 )); then return 1; fi
+        attempts=$((attempts - 1))
+        sleep 0.2
+    done
+}
+
 stop_pi() {
-    local requested="$1" actual="" pid="" args=""
+    local requested="$1" actual="" pid="" args="" attempt
     [[ -f "$PI_STATE/session" && -f "$PI_STATE/pid" ]] || return 0
     read -r actual < "$PI_STATE/session"
     [[ "$actual" == "$requested" ]] || return 0
@@ -22,7 +31,16 @@ stop_pi() {
     [[ "$pid" =~ ^[0-9]+$ ]] || return 0
     args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
     # Do not kill an unrelated process in case a PID was reused.
-    [[ "$args" == *"start.sh --pi"* ]] && kill -TERM "$pid" 2>/dev/null || true
+    if [[ "$args" == *"start.sh --pi"* ]] && kill -TERM "$pid" 2>/dev/null; then
+        # Keep the SSH connection open while the remote launcher drains delivery.
+        for ((attempt = 0; attempt < 120; attempt++)); do
+            if ! read -r actual 2>/dev/null < "$PI_STATE/session" || [[ "$actual" != "$requested" ]] ||
+                    ! kill -0 "$pid" 2>/dev/null; then
+                return 0
+            fi
+            sleep 0.2
+        done
+    fi
 }
 
 cleanup_pi() {
@@ -30,16 +48,19 @@ cleanup_pi() {
     info "Pi servisleri kapatılıyor..."
     if [[ -n "${SDR_PID:-}" ]]; then
         kill -INT -- "-$SDR_PID" 2>/dev/null || kill -TERM "$SDR_PID" 2>/dev/null || true
+        # Leave the API available through RTL cleanup and the producer's 10-second drain.
+        if ! wait_for_exit "$SDR_PID" 100; then
+            kill -TERM -- "-$SDR_PID" 2>/dev/null || true
+            if ! wait_for_exit "$SDR_PID" 10; then
+                kill -KILL -- "-$SDR_PID" 2>/dev/null || true
+            fi
+        fi
+        wait "$SDR_PID" 2>/dev/null || true
     fi
     if [[ -n "${API_PID:-}" ]]; then
         kill -TERM "$API_PID" 2>/dev/null || true
+        wait "$API_PID" 2>/dev/null || true
     fi
-    sleep 1
-    if [[ -n "${SDR_PID:-}" ]]; then
-        kill -TERM -- "-$SDR_PID" 2>/dev/null || true
-        wait "$SDR_PID" 2>/dev/null || true
-    fi
-    [[ -z "${API_PID:-}" ]] || wait "$API_PID" 2>/dev/null || true
     if [[ -f "$PI_STATE/session" ]]; then
         local current=""
         read -r current < "$PI_STATE/session"
@@ -80,8 +101,8 @@ run_pi() {
     curl --fail --silent "$BACKEND/healthz" >/dev/null 2>&1 &&
         die "8000 portunda bir backend zaten çalışıyor."
     info "FastAPI başlatılıyor (Pi localhost; erişim SSH tüneliyle)..."
-    .venv/bin/python -m uvicorn netradar.backend.server:app \
-        --host 127.0.0.1 --port 8000 --workers 1 &
+    NETRADAR_EXPECT_RECEIVER=1 .venv/bin/python -m uvicorn netradar.backend.server:app \
+        --host 127.0.0.1 --port 8000 --workers 1 --no-proxy-headers &
     API_PID=$!
     local attempt
     for attempt in $(seq 1 50); do
@@ -93,11 +114,18 @@ run_pi() {
     info "1090 MHz RTL-SDR alıcısı başlatılıyor..."
     # Isolate the subprocess group so rtl_sdr also stops at shutdown.
     setsid .venv/bin/python -m netradar.pipeline --rtl-sdr \
-        --gain-db "${NETRADAR_GAIN_DB:-35}" --backend-url "$BACKEND" &
+        --gain-db "${NETRADAR_GAIN_DB:-35}" --backend-url "$BACKEND" --diagnostics &
     SDR_PID=$!
     while :; do
         kill -0 "$API_PID" 2>/dev/null || die "Backend beklenmedik şekilde kapandı."
-        kill -0 "$SDR_PID" 2>/dev/null || die "SDR pipeline kapandı; loglara bak."
+        if [[ -n "$SDR_PID" ]] && ! kill -0 "$SDR_PID" 2>/dev/null; then
+            wait "$SDR_PID" 2>/dev/null || true
+            SDR_PID=""
+            if [[ "${1:-}" == "service" ]]; then
+                die "SDR pipeline kapandı; servis yeniden deneyecek."
+            fi
+            info "SDR pipeline kapandı. Backend tanılama için açık kalacak."
+        fi
         sleep 1
     done
 }
@@ -250,7 +278,7 @@ case "${1:-}" in
         # Started by the netradar.service systemd unit on the Pi.
         NETRADAR_SESSION_ID="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
         export NETRADAR_SESSION_ID
-        run_pi
+        run_pi service
         ;;
     --stop-pi) [[ -n "${2:-}" ]] && stop_pi "$2" ;;
     --help|-h)

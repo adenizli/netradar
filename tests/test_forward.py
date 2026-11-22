@@ -15,16 +15,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @contextmanager
-def receiver():
+def receiver(before_response=None, *, status=200):
     received = []
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             received.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
-            self.send_response(200)
+            if before_response is not None:
+                before_response()
+            self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"accepted": true}')
+            try:
+                self.wfile.write(b'{"accepted": true}')
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
         def log_message(self, *args):
             pass

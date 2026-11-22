@@ -3,24 +3,54 @@ import argparse
 import json
 from pathlib import Path
 import sys
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from netradar.contracts import DecodedEvent
 
 
 def send_event(base_url: str, event: DecodedEvent, *, timeout: float = 5.0):
     """Blocking producer adapter; never call on the ASGI event loop."""
+    request = _event_request(_events_url(base_url), event)
+    with urlopen(request, timeout=timeout) as response:
+        return json.load(response)
+
+
+def _events_url(base_url):
     url = urlsplit(base_url)
     if url.scheme not in ("http", "https") or not url.netloc or url.username or url.password or url.query or url.fragment:
         raise ValueError("Backend URL must be http/https without credentials, query or fragment")
-    request = Request(
-        base_url.rstrip("/") + "/api/events", data=event.to_json().encode("utf-8"),
+    return base_url.rstrip("/") + "/api/events"
+
+
+def _event_request(url, event):
+    return Request(
+        url, data=event.to_json().encode("utf-8"),
         headers={"Content-Type": "application/json"}, method="POST",
     )
-    with urlopen(request, timeout=timeout) as response:
-        return json.load(response)
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+class EventPoster:
+    """Confirm acceptance from the response status without buffering the body."""
+
+    def __init__(self, base_url, timeout):
+        self._url = _events_url(base_url)
+        self._timeout = timeout
+        self._opener = build_opener(_NoRedirect())
+
+    def __call__(self, event):
+        try:
+            with self._opener.open(_event_request(self._url, event), timeout=self._timeout):
+                pass
+        except HTTPError as exc:
+            exc.close()
+            raise
 
 
 def main():

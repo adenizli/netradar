@@ -40,19 +40,15 @@ def classify(raw: bytes):
     return ("fixed", fixed) if fixed[0] >> 3 == 17 else ("bad", raw)
 
 
-def main(argv=None):
-    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("path")
-    p.add_argument("--chunk-samples", type=int, default=262_144)
-    args = p.parse_args(argv)
-
+def analyze(path, chunk_samples=262_144):
+    """Return the offline DSP/CRC funnel and ICAO sets for a CU8 file."""
     n = Counter()
     clean_icaos, fixed_icaos = set(), set()
     type_codes = Counter()
     last_clean = {}  # hex -> sample index, to spot one message decoded at nearby offsets
     tail = np.empty(0, dtype=np.float32)
     total_samples = 0
-    for chunk in replay_cu8(args.path, chunk_samples=args.chunk_samples):
+    for chunk in replay_cu8(path, chunk_samples=chunk_samples):
         total_samples += chunk.sample_count
         power = _POWER_LUT[np.frombuffer(chunk.data, dtype="<u2")]
         if tail.size:
@@ -87,13 +83,21 @@ def main(argv=None):
             elif kind == "fixed":
                 fixed_icaos.add(icao)
 
-    seconds = total_samples / 2_000_000
-    demodulated = n["df17_prefix"] - n["tied"]
+    n["demodulated"] = n["df17_prefix"] - n["tied"]
+    return total_samples / 2_000_000, n, clean_icaos, fixed_icaos, type_codes
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("path")
+    p.add_argument("--chunk-samples", type=int, default=262_144)
+    args = p.parse_args(argv)
+    seconds, n, clean_icaos, fixed_icaos, type_codes = analyze(args.path, args.chunk_samples)
     print(f"file:                 {args.path}  ({seconds:.1f} s)")
     print(f"preamble candidates:  {n['candidates']:>9}  ({n['candidates'] / max(seconds, 1e-9):.0f}/s)")
     print(f"  DF17 prefix:        {n['df17_prefix']:>9}")
     print(f"  dropped for ties:   {n['tied']:>9}  (more than {MAX_TIED_BITS} equal half-bit pairs)")
-    print(f"  demodulated:        {demodulated:>9}")
+    print(f"  demodulated:        {n['demodulated']:>9}")
     print(f"    CRC ok:           {n['clean']:>9}")
     print(f"      same frame at nearby offset: {n['clean_duplicate']}  (duplicate events)")
     print(f"    1-bit fixable:    {n['fixed']:>9}  (repaired if the aircraft was already heard)")

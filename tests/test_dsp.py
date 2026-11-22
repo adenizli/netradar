@@ -1,3 +1,4 @@
+from contextlib import closing
 from dataclasses import replace
 from importlib.util import find_spec
 import json
@@ -6,11 +7,13 @@ from pathlib import Path
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+import time
 import unittest
 
-from netradar.acquisition.receiver import replay_cu8
+from netradar.acquisition.receiver import replay_cu8, stream_rtlsdr
 from netradar.contracts import IqChunk
 from netradar.decoder.decode import ADSBDecoder, crc24
+from netradar.metrics import FunnelMetrics
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -119,6 +122,55 @@ class DSPTest(unittest.TestCase):
         chunks = [IqChunk(raw[:200], 0), IqChunk(raw[200:], 101), IqChunk(raw, 1000)]
         frames = list(detect_frames(chunks))
         self.assertEqual([(f.hex, f.sample_index) for f in frames], [(HEX, 1000)])
+
+    def test_receiver_overflow_never_stitches_a_frame_across_dropped_iq(self):
+        with TemporaryDirectory() as directory:
+            fixture = Path(directory) / "burst.cu8"
+            burst = Path(directory) / "burst"
+            resume = Path(directory) / "resume"
+            raw = encode_frame()
+            quiet = b"\x7f\x7f"
+            fixture.write_bytes(
+                quiet * 512 + quiet * 412 + raw[:200] + quiet * 512
+                + raw[200:] + raw + quiet * 132
+            )
+            command = [sys.executable, "-c", """
+import os, sys, time
+from pathlib import Path
+def wait(path):
+    deadline = time.monotonic() + 3
+    while not Path(path).exists() and time.monotonic() < deadline:
+        time.sleep(0.001)
+data = Path(sys.argv[1]).read_bytes()
+os.write(1, data[:1024])
+wait(sys.argv[2])
+os.write(1, data[1024:3072])
+wait(sys.argv[3])
+os.write(1, data[3072:])
+""", str(fixture), str(burst), str(resume)]
+            metrics = FunnelMetrics("synthetic")
+            with closing(stream_rtlsdr(rtl_sdr_cmd=command, chunk_samples=512,
+                                       queue_max_chunks=1, metrics=metrics)) as chunks:
+                first = next(chunks)
+                with self.assertLogs("netradar.acquisition.receiver", level="WARNING"):
+                    burst.touch()
+                    deadline = time.monotonic() + 3
+                    while not metrics.snapshot()["stages"]["acquisition"]["counters"]["queue_dropped_samples"]:
+                        self.assertLess(time.monotonic(), deadline)
+                        time.sleep(0.001)
+                    second = next(chunks)
+
+                    def parts():
+                        yield first
+                        yield second
+                        resume.touch()
+                        yield from chunks
+
+                    frames = list(detect_frames(parts(), source="synthetic", metrics=metrics))
+        self.assertEqual([(frame.hex, frame.sample_index) for frame in frames], [(HEX, 1676)])
+        stages = metrics.snapshot()["stages"]
+        self.assertEqual(stages["acquisition"]["counters"]["queue_dropped_samples"], 512)
+        self.assertEqual(stages["dsp"]["counters"]["gap_samples"], 512)
 
     def test_overlapping_or_rewound_chunks_are_rejected(self):
         for offset in (0, 99):

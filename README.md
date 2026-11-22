@@ -51,6 +51,10 @@ Bu komut iki systemd *user* servisi kurar ve açılışta başlatır (gerekirse 
 
 Servis kuruluyken Mac'te `./start.sh` Pi'deki servise bağlanır, Pi'de ikinci bir alıcı başlatmaz. Ctrl+C sadece Mac tarafını kapatır, Pi çalışmaya devam eder. Servis modunda gain gibi ayarlar Pi'deki `~/.config/netradar.env` dosyasından okunur (ör. `NETRADAR_GAIN_DB=33.8`).
 
+Kurulu systemd servis tanımına yeni kapanış sırasını uygulamak için Pi'de güncel
+repodan `bash scripts/pi_install_service.sh` komutunu tekrar çalıştırın. Bir
+sonraki servis durdurmasında önce bekleyen uçak olayları işlenir, ardından FastAPI kapanır.
+
 ```bash
 bash scripts/pi_install_service.sh --status     # servis, timer, son güncelleme logları
 journalctl --user -u netradar -f                # alıcı logları
@@ -148,6 +152,8 @@ needed; `--max-samples 10000000` limits a hardware check to five seconds at 2 MS
 Ctrl+C closes the producer and releases the dongle. Errors and received/emitted/
 dropped sample counters go to stderr. Without `--backend-url`, stdout stays JSONL.
 See [live setup, replay metadata and failure behavior](docs/DSP_INTEGRATION.md).
+For stage counters, sampled latency and ICAO windows, enable
+`--metrics-json /tmp/netradar-rf.json`. See the [loss-funnel report](docs/METRICS.md).
 
 ## Desktop radar interface
 
