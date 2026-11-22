@@ -74,9 +74,8 @@ export interface Alert {
   zoneName: string;
   time: number;
 }
-export type SourceMode = "demo" | "live";
 export type ConnectionState =
-  "connecting" | "connected" | "reconnecting" | "offline" | "paused";
+  "connecting" | "connected" | "reconnecting" | "offline";
 export interface Settings {
   receiver: Coordinate;
   stationName: string;

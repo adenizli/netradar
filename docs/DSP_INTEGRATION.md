@@ -55,7 +55,7 @@ Gerçek kaydedilmiş 2 MS/s CU8 için:
   | .venv/bin/python -m netradar.backend.forward
 ```
 
-Arayüzde `http://localhost:8000` backend adresiyle **Canlı alıcı** seçilir.
+Arayüz açılınca `http://localhost:8000` backend adresine kendiliğinden bağlanır.
 Fixture uçakları İstanbul dışında bulunabilir; uçak listesinden seçip haritada
 odaklanılabilir. Dosya bittiğinde yeni ölçüm gelmez; konumların eskimesi doğrudur.
 

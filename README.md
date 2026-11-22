@@ -59,7 +59,7 @@ In another terminal, send the seven known synthetic-fixture events:
   | .venv/bin/python -m netradar.backend.forward
 ```
 
-Choose **Canlı alıcı** in the UI, using `http://localhost:8000` as the backend URL.
+Open the UI; it connects to the backend at `http://localhost:8000` by default.
 This in-memory first step uses one worker and starts empty; run the IQ producer
 below in a separate process to feed DSP output. It does not start live SDR acquisition.
 See the [step-by-step backend guide](docs/LIVE_BACKEND.md) for architecture,
@@ -106,8 +106,8 @@ See [live setup, replay metadata and failure behavior](docs/DSP_INTEGRATION.md).
 The React + TypeScript + Leaflet interface is now implemented in `frontend/`.
 It includes a green receiver-centered radar map, directional aircraft markers,
 full decoder-event details, multiple radius zones and entry/exit notifications.
-It starts with clearly labeled fictional demo traffic, and a separate live
-adapter connects to the FastAPI HTTP/WS backend. The compact desktop layout keeps
+It opens directly on the live adapter, which connects to the FastAPI HTTP/WS
+backend; there is no demo traffic. The compact desktop layout keeps
 aircraft, map and zone controls together without a navigation rail or file uploader. See [frontend setup and integration](frontend/README.md).
 
 ```bash

@@ -40,12 +40,9 @@ Four compact counters above the map replace the full-width statistics card; the
 same total, positioned, zone-membership and message-rate figures remain available.
 
 
-- **Demo** starts with fictional Istanbul aircraft from the shared mock JSONL
-  fixture, plus additional explicitly fictional contacts. There are 12 positioned
-  aircraft and one awaiting position. Closed simulated routes stay around
-  Istanbul during long demos. Position, track and zone membership change together.
-  The default is 4× simulation speed; choose 1×/4×/12× or pause it. Updates arrive
-  once per second. No synthetic raw frame or CRC claim is fabricated.
+- The dashboard connects to the **live receiver backend** as soon as it opens; there
+  is no demo or simulated traffic. Until the backend answers, the map is empty and
+  a banner shows the connection state with a shortcut to the connection settings.
 - Click a plane, aircraft list row or zone member to open the **left detail panel**.
   General measurements and raw message tabs stay in the same fixed column.
   The map doesn't lose width when a detail tab opens. Escape closes selection.
@@ -78,14 +75,14 @@ same total, positioned, zone-membership and message-rate figures remain availabl
   during simultaneous crossings; every transition remains in the movement log.
 - Map zoom/pan, receiver recentering, basemap and trajectory toggles work without
   reloading the page. Each contact retains at most 60 measured trail points.
-- Reduced-motion preferences disable sweep/ripple and marker transitions.
+- Reduced-motion preferences disable sweep/ripple and other transitions.
 
 ## Data sources and decoder details
 
-The user interface has two modes: fictional **Demo** traffic and the **Canlı alıcı**
-backend connection. There is no file-upload button or file replay mode in the UI.
-The mock JSONL fixture remains an internal demo seed and the Python JSONL pipeline
-remains available to developers; neither needs a separate operator control.
+The user interface has a single data source: the live backend connection. There is
+no demo mode, file-upload button or file replay mode in the UI. The mock JSONL
+fixture is only used by tests, and the Python JSONL pipeline remains available to
+developers; neither needs a separate operator control.
 
 Every live `event`, unknown nested `fields` / `metadata` extension, and
 `data.latest_events` payload is preserved and available in the message view or
@@ -120,7 +117,7 @@ alıcı**. Implemented backend contract:
    `https://host/radar`, routes become `/radar/api/aircraft` and `/radar/ws/aircraft`.
 
 The client reconnects with 1–15 s exponential backoff, gets a fresh snapshot on
-each reconnect and aborts previous requests when switching sources/unmounting.
+each reconnect and aborts previous requests when the backend URL changes or the page unmounts.
 Initialization has a 10 s timeout and a 5,000-event buffer limit. Incompatible
 schema/data closes the stream and shows an error; **live failures never fall back
 to demo aircraft**. View updates are batched at 200 ms; the server controls message
@@ -137,7 +134,7 @@ These are frontend memory/display limits, not changes to backend state semantics
 ```text
 src/
   components/        map, flight details/list, zones, notifications, settings
-  data/              separate demo generator and real HTTP/WebSocket transport
+  data/              real HTTP/WebSocket transport
   hooks/             traffic lifecycle, batching, zones and notification state
   lib/               wire validation, position freshness, geodesy, geofences, collision layout
   styles/            theme, layout, flights, map, zones, utilities, desktop sizing

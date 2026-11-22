@@ -6,9 +6,8 @@ import {
   parseSnapshot,
   parseUpdate,
 } from "../src/lib/contracts";
-import { demoSeeds, demoUpdates } from "../src/data/demo";
+import fixture from "../../fixtures/aircraft_updates.mock.jsonl?raw";
 import {
-  bearingBetween,
   destination,
   distanceKm,
   hasPosition,
@@ -161,17 +160,9 @@ describe("lossless frontend contract", () => {
     expect(() => parseJsonl("  ")).toThrow();
   });
   it("parses the actual repository UI fixture", () => {
-    const seeds = demoSeeds();
-    expect(seeds).toHaveLength(13);
-    expect(seeds.filter(hasPosition)).toHaveLength(12);
-    expect(seeds.every((a) => a.last_seen === null)).toBe(true);
-  });
-  it("produces valid updates with correctly separate optional measurements", () => {
-    for (const t of [0, 1, 1000])
-      for (const u of demoUpdates(t)) {
-        expect(parseUpdate(u)).toEqual(u);
-        expect(u.data.heading_deg).toBeNull();
-      }
+    const updates = parseJsonl(fixture);
+    expect(updates).toHaveLength(3);
+    for (const u of updates) expect(parseUpdate(u)).toEqual(u);
   });
 });
 describe("geodesic calculations", () => {
@@ -307,31 +298,5 @@ describe("contact retention", () => {
   it("does not grow trails on velocity-only updates or identical fixes", () => {
     const c = mergeContact(undefined, update(aircraft(10)), 1);
     expect(mergeContact(c, update(aircraft(10)), 2).trail).toHaveLength(1);
-  });
-});
-
-describe("continuous demo routes", () => {
-  it("keeps fictional aircraft in the local airspace during long sessions", () => {
-    for (const time of [0, 300, 3600, 86400])
-      for (const { data: a } of demoUpdates(time))
-        if (hasPosition(a))
-          expect(distanceKm(center, [a.latitude!, a.longitude!])).toBeLessThan(
-            65,
-          );
-  });
-  it("points aircraft along their simulated movement", () => {
-    const before = demoUpdates(100),
-      after = demoUpdates(101);
-    for (let i = 0; i < before.length; i++) {
-      const a = before[i].data,
-        b = after[i].data;
-      if (!hasPosition(a)) continue;
-      const actual = bearingBetween(
-        [a.latitude!, a.longitude!],
-        [b.latitude!, b.longitude!],
-      );
-      const difference = Math.abs(((a.track_deg! - actual + 540) % 360) - 180);
-      expect(difference).toBeLessThan(3);
-    }
   });
 });

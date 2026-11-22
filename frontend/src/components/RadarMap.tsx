@@ -25,8 +25,6 @@ interface Props {
   focus: { id: string; key: number } | null;
   trails: boolean;
   connected: boolean;
-  animate: boolean;
-  scanning: boolean;
 }
 export function RadarMap({
   contacts,
@@ -38,8 +36,6 @@ export function RadarMap({
   focus,
   trails,
   connected,
-  animate,
-  scanning,
 }: Props) {
   const host = useRef<HTMLDivElement>(null),
     mapRef = useRef<L.Map | null>(null);
@@ -47,7 +43,6 @@ export function RadarMap({
   const [tileError, setTileError] = useState(false),
     [clusterIds, setClusterIds] = useState<string[]>([]);
   const [baseVisible, setBaseVisible] = useState(true);
-  const [moving, setMoving] = useState(false);
   useEffect(() => {
     if (!host.current) return;
     const map = L.map(host.current, {
@@ -75,14 +70,8 @@ export function RadarMap({
         version: v.version + 1,
       }));
     };
-    const start = () => setMoving(true),
-      end = () => {
-        setMoving(false);
-        update();
-      };
     map.on("move zoom resize", update);
-    map.on("movestart zoomstart", start);
-    map.on("moveend zoomend", end);
+    map.on("moveend zoomend", update);
     const observer = new ResizeObserver(() => {
       map.invalidateSize({ pan: false });
       update();
@@ -162,7 +151,7 @@ export function RadarMap({
       {map && (
         <>
           <div
-            className={`radar-sweep ${!connected || !scanning ? "stopped" : ""}`}
+            className={`radar-sweep ${!connected ? "stopped" : ""}`}
             style={{
               left: origin.x - radius,
               top: origin.y - radius,
@@ -302,7 +291,7 @@ export function RadarMap({
                     </g>
                   )}
                   <g
-                    className={`plane-position ${animate && !moving ? "smooth" : ""}`}
+                    className="plane-position"
                     style={{
                       transform: `translate(${cluster.x}px, ${cluster.y}px)`,
                     }}

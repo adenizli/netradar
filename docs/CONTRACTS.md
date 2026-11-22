@@ -178,8 +178,9 @@ or WebSocket server is started by this module.
 The implemented FastAPI service exposes `snapshot()` as `GET /api/aircraft` and
 publishes these same envelopes on `WS /ws/aircraft`. `POST /api/events` accepts a
 DecodedEvent, validates it, applies it to the authoritative store and broadcasts
-the resulting full update. Reconnect fetches a fresh snapshot. Demo fixture
-updates are fictional UI data and have `event: null`. See [live backend](LIVE_BACKEND.md).
+the resulting full update. Reconnect fetches a fresh snapshot. The mock JSONL
+fixture (`fixtures/aircraft_updates.mock.jsonl`) is fictional test data with
+`event: null`. See [live backend](LIVE_BACKEND.md).
 
 The transport adds optional `stream_id` (server-session identity) and
 `stream_sequence` (monotonically increasing event delivery order) to each envelope
@@ -199,8 +200,8 @@ optional short, on-demand IQ windows are for debugging only.
 ## F. Desktop frontend adapter
 
 The implemented frontend consumes the FastAPI HTTP array snapshot and complete
-WebSocket `aircraft_update` envelopes above. Its other mode is explicitly fictional
-demo traffic; file upload/replay is not part of the operator interface. The Python
+WebSocket `aircraft_update` envelopes above. It has no demo mode; it connects to
+the backend on startup. File upload/replay is not part of the operator interface. The Python
 JSONL delivery adapter remains available to backend developers. The UI does not
 reduce or change the v1.1 schema: full latest events and unknown fields are retained.
 

@@ -125,7 +125,7 @@ uygulanmadığı belirsiz olabilir; bu ilk taşıma exactly-once garantisi verme
 ## 4. Arayüz bağlantısı
 
 Frontend'i normal şekilde açın. Alıcı ayarlarında backend adresi
-`http://localhost:8000` olsun; **Canlı alıcı** seçin.
+`http://localhost:8000` olsun; arayüz açılınca kendiliğinden bağlanır.
 
 1. WebSocket açılır. Backend aboneliği handshake tamamlanmadan kaydeder.
 2. Arayüz HTTP snapshot ister; bu sırada gelen WS mesajlarını tamponlar.
