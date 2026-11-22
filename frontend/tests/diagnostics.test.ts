@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { pollDiagnostics } from "../src/hooks/useDiagnostics";
+import {
+  pollDiagnostics,
+  pollForBackend,
+  updatePoll,
+} from "../src/hooks/useDiagnostics";
 
 import {
   activityAge,
@@ -244,6 +248,45 @@ describe("operator diagnostics", () => {
 });
 
 describe("diagnostics polling", () => {
+  it("clears metrics and trend before the new backend responds, including on initial failure", () => {
+    const oldBackend = "http://old.test";
+    const newBackend = "http://new.test";
+    const capture = parseDiagnostics(report());
+    const oldPoll = updatePoll(
+      {
+        backend: oldBackend,
+        status: "online",
+        data: capture,
+        trend: advanceTrend(emptyTrend, capture),
+      },
+      oldBackend,
+      "online",
+      parseDiagnostics(report({ elapsed: 11, samples: 2000 })),
+    );
+    expect(oldPoll.trend.points).toHaveLength(1);
+
+    expect(pollForBackend(oldPoll, newBackend)).toEqual({
+      backend: newBackend,
+      status: "loading",
+      data: null,
+      trend: emptyTrend,
+    });
+    expect(updatePoll(oldPoll, newBackend, "offline", null)).toEqual({
+      backend: newBackend,
+      status: "offline",
+      data: null,
+      trend: emptyTrend,
+    });
+    const newPoll = updatePoll(
+      oldPoll,
+      newBackend,
+      "online",
+      parseDiagnostics(report({ elapsed: 12, samples: 3000 })),
+    );
+    expect(newPoll.trend.capture?.elapsed).toBe(12);
+    expect(newPoll.trend.points).toEqual([]);
+  });
+
   it("aborts the old backend and ignores a late response during a backend switch", async () => {
     const oldUrl = "http://old.test";
     const newUrl = "http://new.test";

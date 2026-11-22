@@ -9,6 +9,8 @@ type Poll = {
   trend: Trend;
 };
 
+type BackendPoll = Poll & { backend: string };
+
 const initial: Poll = { status: "loading", data: null, trend: emptyTrend };
 
 export function pollDiagnostics(
@@ -56,18 +58,35 @@ export function pollDiagnostics(
   };
 }
 
+export function pollForBackend(
+  poll: BackendPoll,
+  backend: string,
+): BackendPoll {
+  return poll.backend === backend ? poll : { ...initial, backend };
+}
+
+export function updatePoll(
+  poll: BackendPoll,
+  backend: string,
+  status: "online" | "offline",
+  data: Diagnostics | null,
+): BackendPoll {
+  const previous = pollForBackend(poll, backend);
+  return data
+    ? { backend, status, data, trend: advanceTrend(previous.trend, data) }
+    : { ...previous, status };
+}
+
 export function useDiagnostics(backend: string) {
-  const [poll, setPoll] = useState(initial);
-  useEffect(
-    () =>
-      pollDiagnostics(backend, (status, data) => {
-        setPoll((previous) =>
-          data
-            ? { status, data, trend: advanceTrend(previous.trend, data) }
-            : { ...previous, status },
-        );
-      }),
-    [backend],
-  );
-  return poll;
+  const [poll, setPoll] = useState<BackendPoll>(() => ({
+    ...initial,
+    backend,
+  }));
+  useEffect(() => {
+    setPoll((previous) => pollForBackend(previous, backend));
+    return pollDiagnostics(backend, (status, data) => {
+      setPoll((previous) => updatePoll(previous, backend, status, data));
+    });
+  }, [backend]);
+  return pollForBackend(poll, backend);
 }
