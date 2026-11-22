@@ -3,6 +3,8 @@ import json
 import os
 from pathlib import Path
 import resource
+import shutil
+import subprocess
 import sys
 from threading import Event, Thread
 import time
@@ -10,7 +12,33 @@ from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
-def process_resources() -> dict:
+_throttling_cache = (float("-inf"), None)
+
+
+def throttling_mask():
+    """Probe firmware only on the producer worker, at most once per 30 seconds."""
+    global _throttling_cache
+    now = time.monotonic()
+    if now - _throttling_cache[0] < 30:
+        return _throttling_cache[1]
+    value = None
+    executable = shutil.which("vcgencmd")
+    if executable:
+        try:
+            result = subprocess.run([executable, "get_throttled"], capture_output=True,
+                                    text=True, timeout=0.25, check=True)
+            prefix, raw = result.stdout.strip().split("=", 1)
+            if prefix == "throttled" and raw.startswith("0x"):
+                parsed = int(raw, 16)
+                if 0 <= parsed <= 0xFFFFFFFF:
+                    value = parsed
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+    _throttling_cache = now, value
+    return value
+
+
+def process_resources(*, include_throttling=False) -> dict:
     usage = resource.getrusage(resource.RUSAGE_SELF)
     peak_rss = usage.ru_maxrss * (1 if sys.platform == "darwin" else 1024)
     try:
@@ -26,7 +54,7 @@ def process_resources() -> dict:
         "peak_rss_bytes": peak_rss,
         "rss_bytes": rss,
         "temperature_celsius": temperature,
-        "throttling_mask": None,
+        "throttling_mask": throttling_mask() if include_throttling else None,
     }
 
 
@@ -70,7 +98,7 @@ class TelemetrySender:
                 payload = json.dumps({
                     "sequence": sequence,
                     "capture": self._metrics.snapshot(),
-                    "resources": process_resources(),
+                    "resources": process_resources(include_throttling=True),
                 }, allow_nan=False, separators=(",", ":")).encode()
                 request = Request(self._url, payload, {"Content-Type": "application/json"}, method="POST")
                 with opener.open(request, timeout=self._timeout):

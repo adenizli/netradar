@@ -47,7 +47,10 @@ resource reports include cumulative process CPU seconds, current and peak RSS
 bytes, host temperature in Celsius and the Pi throttling bit mask where
 available. Derive process CPU utilization by dividing a CPU-seconds delta by
 the matching elapsed-time delta. Current RSS requires Linux `/proc`. Temperature
-requires a readable Linux thermal zone. Throttling is currently unavailable.
+requires a readable Linux thermal zone. On a Pi, the producer worker probes
+`vcgencmd get_throttled` at most once every 30 seconds; failure remains null.
+Backend request handlers do not launch firmware subprocesses. The mask includes
+current and historical firmware flags and is not a CPU utilization percentage.
 A missing measurement is null.
 
 A producer starts a new session with a new capture ID. The backend holds one

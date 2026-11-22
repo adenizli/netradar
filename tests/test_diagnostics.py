@@ -143,4 +143,7 @@ class DiagnosticsTest(unittest.TestCase):
             self.assertIn('netradar_acquisition_latency_seconds_bucket{source="synthetic",le="+Inf"} 1', body.text)
             self.assertNotIn("netradar_dsp_samples_total", body.text)
             self.assertNotIn(metrics.capture_id, body.text)
-            self.assertNotIn("icao", body.text)
+            self.assertNotIn("icao=", body.text)
+            self.assertNotIn("ABC123", body.text)
+            self.assertIn('netradar_distinct_icao{source="synthetic",window_seconds="300"} 0', body.text)
+            self.assertEqual(body.text.count("# TYPE netradar_distinct_icao gauge"), 1)

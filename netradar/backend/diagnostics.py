@@ -162,10 +162,14 @@ class Diagnostics:
 
 def prometheus(report):
     lines = []
+    defined = set()
 
     def metric(name, value, kind="gauge", labels=""):
         if value is not None:
-            lines.extend((f"# TYPE netradar_{name} {kind}", f"netradar_{name}{labels} {value}"))
+            if name not in defined:
+                lines.append(f"# TYPE netradar_{name} {kind}")
+                defined.add(name)
+            lines.append(f"netradar_{name}{labels} {value}")
 
     for status in ("accepted", "rejected"):
         metric(f"backend_events_{status}_total", report["backend"][status], "counter")
@@ -185,6 +189,12 @@ def prometheus(report):
         labels = f'{{source="{source}"}}'
         metric("capture_elapsed_seconds", capture["elapsed_seconds"], labels=labels)
         metric("sample_rate_hertz", capture["sample_rate_hz"], labels=labels)
+        windows = capture["distinct_icao_windows"]
+        if windows["status"] == "measured":
+            for seconds, window in windows["windows_seconds"].items():
+                window_labels = f'{{source="{source}",window_seconds="{seconds}"}}'
+                metric("distinct_icao", window["count"], labels=window_labels)
+                metric("distinct_icao_lower_bound", int(window["lower_bound"]), labels=window_labels)
         for name in ("last_iq_at_unix_ms", "last_valid_crc_at_unix_ms"):
             if (value := report[name]) is not None:
                 metric(name.removesuffix("_at_unix_ms") + "_timestamp_seconds", value / 1000, labels=labels)
