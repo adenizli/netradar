@@ -121,6 +121,9 @@ run_pi() {
         if [[ -n "$SDR_PID" ]] && ! kill -0 "$SDR_PID" 2>/dev/null; then
             wait "$SDR_PID" 2>/dev/null || true
             SDR_PID=""
+            if [[ "${1:-}" == "service" ]]; then
+                die "SDR pipeline kapandı; servis yeniden deneyecek."
+            fi
             info "SDR pipeline kapandı. Backend tanılama için açık kalacak."
         fi
         sleep 1
@@ -275,7 +278,7 @@ case "${1:-}" in
         # Started by the netradar.service systemd unit on the Pi.
         NETRADAR_SESSION_ID="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
         export NETRADAR_SESSION_ID
-        run_pi
+        run_pi service
         ;;
     --stop-pi) [[ -n "${2:-}" ]] && stop_pi "$2" ;;
     --help|-h)

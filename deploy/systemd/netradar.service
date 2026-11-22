@@ -11,8 +11,10 @@ Environment=PYTHONUNBUFFERED=1
 # Optional settings, e.g. NETRADAR_GAIN_DB=33.8
 EnvironmentFile=-%h/.config/netradar.env
 ExecStart=/bin/bash "@ROOT@/start.sh" --service
-KillMode=control-group
-TimeoutStopSec=20
+# Signal the launcher first so it can drain the SDR producer while FastAPI is alive.
+# systemd still kills any remaining children after the launcher exits or times out.
+KillMode=mixed
+TimeoutStopSec=30
 SuccessExitStatus=130 143
 # Without a dongle or after a crash, retry every 15 s instead of giving up.
 Restart=always

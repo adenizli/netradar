@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -35,7 +36,7 @@ class LauncherTest(unittest.TestCase):
             cwd=ROOT, check=True,
         )
 
-    def test_pi_launcher_keeps_backend_alive_until_delivery_drains(self):
+    def test_pi_launcher_stops_children_in_order_and_restarts_after_service_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             shutil.copy(ROOT / "start.sh", root)
@@ -75,7 +76,7 @@ else:
         (root / "delivery-result").write_text("drained" if api.exists() else "backend stopped")
         sys.exit(130)
     signal.signal(signal.SIGINT, drain)
-    (root / "producer-active").touch()
+    (root / "producer-active").write_text(str(os.getpid()))
 
 while True:
     time.sleep(.1)
@@ -83,20 +84,30 @@ while True:
             session = "0123456789abcdef" * 2
             env = {**os.environ, "PATH": f"{root / 'bin'}:{os.environ['PATH']}",
                    "NETRADAR_TEST_DIR": directory, "NETRADAR_SESSION_ID": session}
-            launcher = subprocess.Popen(["bash", "start.sh", "--pi"], cwd=root, env=env,
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            try:
-                deadline = time.monotonic() + 5
-                while (not (root / "producer-active").exists() and launcher.poll() is None
-                       and time.monotonic() < deadline):
-                    time.sleep(.02)
-                self.assertTrue((root / "producer-active").exists())
-                subprocess.run(["bash", "start.sh", "--stop-pi", session], cwd=root, env=env,
-                               check=True, timeout=8)
-                launcher.communicate(timeout=3)
-                self.assertEqual((root / "delivery-result").read_text(), "drained")
-                self.assertFalse((root / "api-active").exists())
-            finally:
-                if launcher.poll() is None:
-                    launcher.terminate()
-                launcher.communicate(timeout=24)
+            for mode in ("--pi", "--service"):
+                with self.subTest(mode=mode):
+                    producer = root / "producer-active"
+                    producer.unlink(missing_ok=True)
+                    launcher = subprocess.Popen(["bash", "start.sh", mode], cwd=root, env=env,
+                                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    try:
+                        deadline = time.monotonic() + 5
+                        while (not producer.exists() and launcher.poll() is None
+                               and time.monotonic() < deadline):
+                            time.sleep(.02)
+                        self.assertTrue(producer.exists())
+                        if mode == "--pi":
+                            subprocess.run(["bash", "start.sh", "--stop-pi", session], cwd=root,
+                                           env=env, check=True, timeout=8)
+                            launcher.communicate(timeout=3)
+                            self.assertEqual((root / "delivery-result").read_text(), "drained")
+                        else:
+                            os.kill(int(producer.read_text()), signal.SIGTERM)
+                            _, stderr = launcher.communicate(timeout=3)
+                            self.assertEqual(launcher.returncode, 1)
+                            self.assertIn("servis yeniden deneyecek", stderr)
+                        self.assertFalse((root / "api-active").exists())
+                    finally:
+                        if launcher.poll() is None:
+                            launcher.terminate()
+                        launcher.communicate(timeout=24)
