@@ -13,6 +13,15 @@ die() { printf '[NetRadar] HATA: %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "'$1' bulunamadı. $2"; }
 ready() { curl --fail --silent --max-time 2 "$1" >/dev/null 2>&1; }
 
+wait_for_exit() {
+    local pid="$1" attempts="$2"
+    while kill -0 "$pid" 2>/dev/null; do
+        if (( attempts == 0 )); then return 1; fi
+        attempts=$((attempts - 1))
+        sleep 0.2
+    done
+}
+
 stop_pi() {
     local requested="$1" actual="" pid="" args=""
     [[ -f "$PI_STATE/session" && -f "$PI_STATE/pid" ]] || return 0
@@ -22,7 +31,10 @@ stop_pi() {
     [[ "$pid" =~ ^[0-9]+$ ]] || return 0
     args="$(ps -p "$pid" -o args= 2>/dev/null || true)"
     # Do not kill an unrelated process in case a PID was reused.
-    [[ "$args" == *"start.sh --pi"* ]] && kill -TERM "$pid" 2>/dev/null || true
+    if [[ "$args" == *"start.sh --pi"* ]] && kill -TERM "$pid" 2>/dev/null; then
+        # Keep the SSH connection open while the remote launcher drains delivery.
+        wait_for_exit "$pid" 120 || true
+    fi
 }
 
 cleanup_pi() {
@@ -30,16 +42,19 @@ cleanup_pi() {
     info "Pi servisleri kapatılıyor..."
     if [[ -n "${SDR_PID:-}" ]]; then
         kill -INT -- "-$SDR_PID" 2>/dev/null || kill -TERM "$SDR_PID" 2>/dev/null || true
+        # Leave the API available through RTL cleanup and the producer's 10-second drain.
+        if ! wait_for_exit "$SDR_PID" 100; then
+            kill -TERM -- "-$SDR_PID" 2>/dev/null || true
+            if ! wait_for_exit "$SDR_PID" 10; then
+                kill -KILL -- "-$SDR_PID" 2>/dev/null || true
+            fi
+        fi
+        wait "$SDR_PID" 2>/dev/null || true
     fi
     if [[ -n "${API_PID:-}" ]]; then
         kill -TERM "$API_PID" 2>/dev/null || true
+        wait "$API_PID" 2>/dev/null || true
     fi
-    sleep 1
-    if [[ -n "${SDR_PID:-}" ]]; then
-        kill -TERM -- "-$SDR_PID" 2>/dev/null || true
-        wait "$SDR_PID" 2>/dev/null || true
-    fi
-    [[ -z "${API_PID:-}" ]] || wait "$API_PID" 2>/dev/null || true
     if [[ -f "$PI_STATE/session" ]]; then
         local current=""
         read -r current < "$PI_STATE/session"
