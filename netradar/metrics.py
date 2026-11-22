@@ -2,11 +2,13 @@
 from bisect import bisect_left
 from collections import OrderedDict
 from collections.abc import Mapping
+import re
 from threading import Lock
 import time
 from uuid import uuid4
 
 SOURCES = frozenset(("rf", "replay", "synthetic"))
+_CAPTURE_ID = re.compile(r"[A-Za-z0-9_.:-]{1,96}")
 STAGE_COUNTERS = {
     "acquisition": (
         "rf_bytes", "complex_samples", "emitted_samples", "emitted_chunks",
@@ -94,8 +96,8 @@ class FunnelMetrics:
                  clock_ns=time.monotonic_ns, wall_clock_ns=time.time_ns):
         if not isinstance(source, str) or source not in SOURCES:
             raise ValueError("Metrics source must be rf, replay or synthetic")
-        if capture_id is not None and (not isinstance(capture_id, str) or not capture_id):
-            raise ValueError("Capture identity must be a nonempty string")
+        if capture_id is not None and (not isinstance(capture_id, str) or not _CAPTURE_ID.fullmatch(capture_id)):
+            raise ValueError("Metrics capture identity must contain 1–96 letters, numbers, or _ . : -")
         if sample_rate_hz is not None and (type(sample_rate_hz) is not int or sample_rate_hz <= 0):
             raise ValueError("Sample rate must be a positive integer")
         if type(icao_capacity) is not int or icao_capacity <= 0:

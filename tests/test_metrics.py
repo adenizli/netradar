@@ -5,6 +5,13 @@ from netradar.metrics import FunnelMetrics, STAGE_COUNTERS
 
 
 class FunnelMetricsTest(unittest.TestCase):
+    def test_capture_identity_matches_backend_wire_contract(self):
+        self.assertEqual(FunnelMetrics("rf", capture_id="field-run_1:step.2").capture_id,
+                         "field-run_1:step.2")
+        for invalid in ("", " ", "capture id", "x" * 97, "test\n"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                FunnelMetrics("rf", capture_id=invalid)
+
     def test_no_activity_and_unavailable_have_distinct_status(self):
         clock = iter((0, 1_000_000_000, 2_000_000_000))
         metrics = FunnelMetrics("rf", sample_rate_hz=2_000_000, clock_ns=lambda: next(clock),

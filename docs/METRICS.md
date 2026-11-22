@@ -14,6 +14,8 @@ interval also refreshes it during processing or idle periods. The report stays
 separate from decoded event JSONL on standard output. Omit the metrics options
 and diagnostics for a baseline with the collector disabled. Use
 `--capture-id` to supply an ID for both the metrics and the decoded events.
+Metrics IDs accept 1–96 ASCII letters, digits, underscores, periods, colons
+and hyphens.
 
 For a deterministic seven-frame capture, replace the live input options with
 `--iq fixtures/synthetic_adsb_2msps.cu8`. The fixture's sidecar identifies it
