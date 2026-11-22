@@ -272,8 +272,22 @@ run_mac() {
     done
 }
 
+show_events() {
+    # Print the Pi's power/shutdown/internet event report (netradar-monitor.service).
+    need ssh "Pi için SSH gerekli."
+    local target directory quoted_dir
+    target="${NETRADAR_PI_TARGET:-netradar@netradar.local}"
+    directory="${NETRADAR_PI_DIR:-netradar}"
+    printf -v quoted_dir '%q' "$directory"
+    [[ "$directory" == /* ]] || quoted_dir="\$HOME/$quoted_dir"
+    ssh -o ConnectTimeout=12 -T "$target" \
+        "cd $quoted_dir && python3 tools/station_monitor.py --report --days ${NETRADAR_EVENT_DAYS:-30}" ||
+        die "Pi'den olay raporu alınamadı."
+}
+
 case "${1:-}" in
     --pi) run_pi ;;
+    --events) show_events ;;
     --service)
         # Started by the netradar.service systemd unit on the Pi.
         NETRADAR_SESSION_ID="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
@@ -285,9 +299,10 @@ case "${1:-}" in
         cat <<'HELP'
 NetRadar tek komut (Mac -> Raspberry Pi + frontend)
   ./start.sh          Canlı RTL-SDR + backend + radar arayüzü
-Değişkenler: NETRADAR_PI_TARGET, NETRADAR_PI_DIR, NETRADAR_GAIN_DB
+  ./start.sh --events Pi'nin olay raporu: elektrik kesintisi, kapatma, internet
+Değişkenler: NETRADAR_PI_TARGET, NETRADAR_PI_DIR, NETRADAR_GAIN_DB, NETRADAR_EVENT_DAYS
 Kapat: Ctrl+C
-Pi'de sürekli çalışma + GitHub'dan otomatik güncelleme (Pi'de bir kez):
+Pi'de sürekli çalışma, otomatik güncelleme ve olay kaydı (Pi'de bir kez):
   bash scripts/pi_install_service.sh
 HELP
         ;;
