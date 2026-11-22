@@ -52,22 +52,21 @@ def demodulate_df17_frames(
     pairs are read as 0 instead of rejecting the frame; the decoder's CRC
     decides whether the guess was right. Order follows ``starts``. Noise
     candidates are first rejected on the 5 DF bits alone, so only plausible
-    ones are fully sliced. Optional counts describe only this batch.
+    ones are fully sliced. Optional counts describe this batch; omitted counters
+    have zero increments.
     """
     starts = np.asarray(starts, dtype=np.intp)
     starts = starts[(starts >= 0) & (starts + 240 <= len(power))]
-    if counts is not None:
-        counts.update(df17_prefixes=0, ppm_tied_rejects=0)
     if not starts.size:
         return []
     head = power[starts[:, None] + _DF_OFFSETS]
     df_bits = head[:, 0::2] > head[:, 1::2]
     # DF 17 = 10001, with ties read as 0 exactly like the full check below.
     starts = starts[df_bits[:, 0] & ~df_bits[:, 1] & ~df_bits[:, 2] & ~df_bits[:, 3] & df_bits[:, 4]]
-    if counts is not None:
-        counts["df17_prefixes"] = int(starts.size)
     if not starts.size:
         return []
+    if counts is not None:
+        counts["df17_prefixes"] = int(starts.size)
     data = power[starts[:, None] + _FRAME_OFFSETS]
     first_half, second_half = data[:, 0::2], data[:, 1::2]
     frames = np.packbits(first_half > second_half, axis=1, bitorder="big")

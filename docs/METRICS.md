@@ -94,3 +94,22 @@ advances its clock when another input frame arrives. The table tracks the
 most recently updated 4,096 ICAOs by default. After eviction, a window that
 could omit an active ICAO sets `lower_bound: true`. No individual ICAO
 addresses appear in the report.
+
+## Measure producer CPU and memory on the Pi
+
+With the SDR available for a dedicated benchmark, run alternating metrics-off
+and metrics-on captures at the same gain, rate and chunk size:
+
+```sh
+.venv/bin/python tools/metrics_overhead.py --rtl-sdr --seconds 60 --pairs 3 \
+  --gain-db 35 > /tmp/netradar-overhead.json
+```
+
+The metrics-on runs write one JSON snapshot per second. Both modes send the
+same terminal JSONL through an in-process sink. Each run uses a fresh producer
+process and reports its CPU seconds, wall time, peak RSS, input samples, queue
+drops and decoded event count. The comparison takes the median paired CPU
+change per million received samples. The target is less than 5% additional
+producer CPU. Event traffic and drops can vary across adjacent live captures.
+Use `--iq CAPTURE.cu8` in place of `--rtl-sdr` to repeat the same input bytes
+for every run.

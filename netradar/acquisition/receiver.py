@@ -165,10 +165,10 @@ def _replay(path: Path, chunk_samples: int, sample_rate_hz: int, center_frequenc
                 data = data[:-1]
             count = len(data) // 2
             if metrics is not None and raw_bytes:
-                metrics.observe("acquisition", counters={
+                metrics._record("acquisition", counters={
                     "rf_bytes": raw_bytes, "complex_samples": count, "emitted_samples": count,
                     "emitted_chunks": int(bool(data)),
-                }, duration_ns=duration, head_sample_index=index + count)
+                }, duration_ns=duration, activity=True, head_sample_index=index + count)
             if not data:
                 return
             yield IqChunk(data, index, sample_rate_hz, center_frequency_hz)
@@ -375,9 +375,10 @@ def _pump_samples(stdout, block_bytes, limit_bytes, chunks, stop, done, state, m
             data = _read_full(stdout, want)
             if metrics is not None and data:
                 count = len(data) // 2
-                metrics.observe("acquisition", counters={
+                metrics._record("acquisition", counters={
                     "rf_bytes": len(data), "complex_samples": count,
-                }, duration_ns=metrics.elapsed_latency(started), head_sample_index=index + count)
+                }, duration_ns=metrics.elapsed_latency(started), activity=True,
+                   head_sample_index=index + count)
             if len(data) % 2:
                 log.warning("rtl_sdr output ended on an odd byte; dropping it")
                 data = data[:-1]
@@ -393,7 +394,7 @@ def _pump_samples(stdout, block_bytes, limit_bytes, chunks, stop, done, state, m
                 dropped_in_episode += n
                 state.dropped += n
                 if metrics is not None:
-                    metrics.observe("acquisition", counters={
+                    metrics._record("acquisition", counters={
                         "queue_dropped_chunks": 1, "queue_dropped_samples": n,
                     })
             else:
@@ -510,7 +511,7 @@ def _stream(cmd, *, sample_rate_hz, center_frequency_hz, chunk_samples, max_samp
             stats.chunks_emitted += 1
             sync_stats()
             if metrics is not None:
-                metrics.observe("acquisition", counters={
+                metrics._record("acquisition", counters={
                     "emitted_samples": chunk.sample_count, "emitted_chunks": 1,
                 })
             yield chunk

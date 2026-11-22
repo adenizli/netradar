@@ -32,8 +32,7 @@ class _MetricsFile:
             with NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent,
                                     prefix=".netradar-metrics-", delete=False) as file:
                 pending = Path(file.name)
-                json.dump(self.metrics.snapshot(), file, allow_nan=False, separators=(",", ":"))
-                file.write("\n")
+                file.write(json.dumps(self.metrics.snapshot(), allow_nan=False, separators=(",", ":")) + "\n")
             pending.replace(self.path)
         finally:
             if pending is not None:

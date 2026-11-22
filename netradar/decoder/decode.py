@@ -384,9 +384,9 @@ class ADSBDecoder:
         events = self._decode(frame, observation)
         duration = metrics.elapsed_latency(started)
         observation.counters["decoded_events"] = len(events)
-        metrics.observe("decoder", counters=observation.counters, duration_ns=duration,
-                        head_sample_index=frame.sample_index + 1, valid_icao=observation.icao,
-                        icao_sample_index=frame.sample_index)
+        metrics._record("decoder", counters=observation.counters, duration_ns=duration,
+                        activity=observation.icao is not None, head_sample_index=frame.sample_index + 1,
+                        valid_icao=observation.icao, icao_sample_index=frame.sample_index)
         return events
 
     def _decode(self, frame: ModeSFrame, observation: _DecodeObservation | None = None) -> list[DecodedEvent]:

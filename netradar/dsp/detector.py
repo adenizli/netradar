@@ -48,7 +48,8 @@ def detect_frames(chunks: Iterable[IqChunk], *, source: str = "rf",
                 raise ValueError("DSP currently supports exactly 2,000,000 samples/second")
             if chunk.center_frequency_hz != 1_090_000_000:
                 raise ValueError("DSP expects a 1090 MHz ADS-B capture")
-            if chunk.sample_count == 0:
+            sample_count = chunk.sample_count
+            if sample_count == 0:
                 continue
             if expected_start is None and metrics is not None:
                 metrics.set_sample_rate(SAMPLE_RATE)
@@ -63,22 +64,19 @@ def detect_frames(chunks: Iterable[IqChunk], *, source: str = "rf",
             current_power = _POWER_LUT[np.frombuffer(chunk.data, dtype="<u2")]
             power = np.concatenate((tail, current_power)) if tail.size else current_power
             buffer_start = chunk.start_sample_index - len(tail)
-            expected_start = chunk.start_sample_index + chunk.sample_count
+            expected_start = chunk.start_sample_index + sample_count
             starts = detect_preambles(power)
-            counts = {} if metrics is not None else None
+            counts = {"samples": sample_count, "preamble_candidates": len(starts)} if metrics is not None else None
             frames = demodulate_df17_frames(power, starts, counts=counts)
             # Complete starts were scanned once; only incomplete possible starts remain.
             tail = power[-(FRAME_SAMPLES - 1):].copy()
             if metrics is not None:
-                counts.update(
-                    samples=chunk.sample_count,
-                    chunk_gaps=int(gap > 0),
-                    gap_samples=gap,
-                    preamble_candidates=len(starts),
-                    demodulated_frames=len(frames),
-                )
-                metrics.observe("dsp", counters=counts, head_sample_index=expected_start,
-                                duration_ns=metrics.elapsed_latency(started))
+                if gap:
+                    counts.update(chunk_gaps=1, gap_samples=gap)
+                if frames:
+                    counts["demodulated_frames"] = len(frames)
+                metrics._record("dsp", counters=counts, head_sample_index=expected_start,
+                                duration_ns=metrics.elapsed_latency(started), activity=True)
             for start, raw in frames:
                 sample_index = buffer_start + start
                 observed = None if capture_start_unix_ms is None else (

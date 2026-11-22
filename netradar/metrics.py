@@ -2,6 +2,7 @@
 from bisect import bisect_left
 from collections import OrderedDict
 from collections.abc import Mapping
+from itertools import count
 import re
 from threading import Lock
 import time
@@ -116,7 +117,7 @@ class FunnelMetrics:
         self._measured: set[str] = set()
         self._last_activity_ns: dict[str, int] = {}
         self._latency = {stage: _LatencyHistogram() for stage in STAGE_COUNTERS}
-        self._latency_calls = dict.fromkeys(STAGE_COUNTERS, 0)
+        self._latency_calls = {stage: count() for stage in STAGE_COUNTERS}
         self._capture_head: int | None = None
         self._queue = {"depth": None, "high_water": None, "capacity": None}
         self._icao_capacity = icao_capacity
@@ -141,10 +142,7 @@ class FunnelMetrics:
 
     def begin_latency(self, stage: str) -> int | None:
         """Time the first and every 32nd operation per stage using a monotonic clock."""
-        with self._lock:
-            calls = self._latency_calls[stage]
-            self._latency_calls[stage] += 1
-        return self._clock_ns() if calls % _LATENCY_SAMPLE_STRIDE == 0 else None
+        return self._clock_ns() if next(self._latency_calls[stage]) % _LATENCY_SAMPLE_STRIDE == 0 else None
 
     def elapsed_latency(self, started_ns: int | None) -> int | None:
         return None if started_ns is None else self._clock_ns() - started_ns
@@ -173,18 +171,30 @@ class FunnelMetrics:
         ):
             raise ValueError("Valid ICAO observations require a decoder sample index")
 
+        activity = bool(counters and any(counters.get(key, 0) for key in _ACTIVITY_COUNTERS[stage]))
+        self._record(stage, counters=counters, duration_ns=duration_ns, activity=activity,
+                     head_sample_index=head_sample_index, valid_icao=valid_icao,
+                     icao_sample_index=icao_sample_index)
+
+    def _record(self, stage: str, *, counters: Mapping[str, int] | None = None,
+                duration_ns: int | None = None, activity: bool = False,
+                head_sample_index: int | None = None, valid_icao: str | None = None,
+                icao_sample_index: int | None = None) -> None:
+        """Write fixed counters from trusted, in-process pipeline hooks."""
         with self._lock:
             if self._finished_ns is not None:
                 raise RuntimeError("Cannot record metrics for a finished capture")
             self._measured.add(stage)
-            for key, value in increments:
-                target[key] += value
-            if counters and any(counters.get(key, 0) for key in _ACTIVITY_COUNTERS[stage]):
+            if counters is not None:
+                target = self._counters[stage]
+                for key, value in counters.items():
+                    target[key] += value
+            if activity:
                 self._last_activity_ns[stage] = self._clock_ns()
             if duration_ns is not None:
                 self._latency[stage].record(duration_ns)
-            if head_sample_index is not None:
-                self._capture_head = max(self._capture_head or 0, head_sample_index)
+            if head_sample_index is not None and (self._capture_head is None or head_sample_index > self._capture_head):
+                self._capture_head = head_sample_index
             if valid_icao is not None:
                 self._record_icao(valid_icao, icao_sample_index)
 
