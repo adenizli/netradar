@@ -26,6 +26,8 @@ Use `--output-dir` for a different private destination. Use `--tuner-serial`
 if USB serial auto-detection is ambiguous. The run records the OS-reported Pi
 model and CPU temperature where available. Tuner diagnostics record the actual
 gain selected by the driver where the driver reports it.
+Add `--diagnostics` with a diagnostics-enabled backend to sample receiver state,
+queue occupancy, backend ingestion and producer/backend CPU and memory data.
 
 ## Site metadata
 

@@ -54,7 +54,7 @@ def revision(explicit):
     return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
 
 
-def capture_snapshot(metrics_path, backend_url):
+def capture_snapshot(metrics_path, backend_url, diagnostics):
     sample = {"observed_at": datetime.now(timezone.utc).isoformat(), "cpu_temperature_c": temperature()}
     if metrics_path.is_file():
         sample["metrics"] = json.loads(metrics_path.read_text(encoding="utf-8"))
@@ -82,6 +82,16 @@ def capture_snapshot(metrics_path, backend_url):
         ]
     except (OSError, ValueError, TypeError, KeyError) as exc:
         sample["backend_error"] = str(exc)
+    if diagnostics:
+        try:
+            with urlopen(backend_url.rstrip("/") + "/api/diagnostics", timeout=2) as response:
+                payload = json.load(response)
+            sample["diagnostics"] = {
+                "capture_id": (payload.get("capture") or {}).get("capture_id"),
+                **{key: payload.get(key) for key in ("receiver_state", "queue", "backend", "resources")},
+            }
+        except (OSError, ValueError, TypeError, AttributeError) as exc:
+            sample["diagnostics_error"] = str(exc)
     return sample
 
 
@@ -101,13 +111,16 @@ def record(args, run, metadata):
            "--rtl-sdr-command", str(ROOT / "tools/rtl_field_tap.py"),
            "--gain-db", args.gain_db, "--ppm", str(args.ppm), "--device-index", str(args.device_index),
            "--backend-url", args.backend_url]
+    if args.diagnostics:
+        cmd.append("--diagnostics")
     with (run / "pipeline.log").open("wb") as log, (run / "snapshots.jsonl").open("w", encoding="utf-8") as snapshots:
         pipeline = subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
                                     start_new_session=True)
         start = time.monotonic()
         try:
             for slot in range(args.minutes * 60 // SNAPSHOT_INTERVAL + 1):
-                print(json.dumps(capture_snapshot(metrics, args.backend_url)), file=snapshots, flush=True)
+                sample = capture_snapshot(metrics, args.backend_url, args.diagnostics)
+                print(json.dumps(sample), file=snapshots, flush=True)
                 remaining = start + (slot + 1) * SNAPSHOT_INTERVAL - time.monotonic()
                 if remaining > 0:
                     try:
@@ -119,7 +132,8 @@ def record(args, run, metadata):
             # extension and label an overlong or interrupted collection incomplete.
             deadline = start + args.minutes * 60 + 30
             while pipeline.poll() is None and time.monotonic() < deadline:
-                print(json.dumps(capture_snapshot(metrics, args.backend_url)), file=snapshots, flush=True)
+                sample = capture_snapshot(metrics, args.backend_url, args.diagnostics)
+                print(json.dumps(sample), file=snapshots, flush=True)
                 try:
                     pipeline.wait(timeout=SNAPSHOT_INTERVAL)
                 except subprocess.TimeoutExpired:
@@ -135,7 +149,8 @@ def record(args, run, metadata):
             metadata["window"]["elapsed_wall_seconds"] = time.monotonic() - start
             metadata["window"]["ended_at"] = datetime.now().astimezone().isoformat()
             metadata["pipeline_returncode"] = pipeline.returncode
-            print(json.dumps(capture_snapshot(metrics, args.backend_url)), file=snapshots, flush=True)
+            sample = capture_snapshot(metrics, args.backend_url, args.diagnostics)
+            print(json.dumps(sample), file=snapshots, flush=True)
             diagnostics = read_system_file(run / "rtl-sdr.log")
             if diagnostics:
                 model = re.search(r"^Found (.+) tuner$", diagnostics, re.MULTILINE)
@@ -169,6 +184,7 @@ def main():
     parser.add_argument("--tuner-serial", help="Override USB serial auto-discovery")
     parser.add_argument("--tuner-model", help="Optional verified tuner model if known")
     parser.add_argument("--backend-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--diagnostics", action="store_true", help="Also collect backend and producer resource diagnostics")
     parser.add_argument("--rtl-sdr-command", default="rtl_sdr")
     parser.add_argument("--code-commit", help="Recorded Git revision when running an exported checkout")
     args = parser.parse_args()
@@ -208,6 +224,7 @@ def main():
         "capture": {
             "snippet_period_seconds": SNIPPET_PERIOD, "snippet_length_seconds": SNIPPET_LENGTH,
             "snippet_limit": args.minutes, "poll_interval_seconds": SNAPSHOT_INTERVAL,
+            "backend_diagnostics_requested": args.diagnostics,
         },
         "site": site,
     }

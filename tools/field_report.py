@@ -80,7 +80,6 @@ def collect_aircraft(snapshots, capture_id, window_start):
         if "aircraft" not in snapshot:
             continue
         timestamp = datetime.fromisoformat(snapshot["observed_at"]).astimezone(window_start.tzinfo)
-        # Preserve the offset so local hours that repeat at a DST change stay separate.
         hour = timestamp.replace(minute=0, second=0, microsecond=0).isoformat()
         stats = hours.setdefault(hour, {"snapshots": 0, "new_icao": set(), "positioned_icao": set()})
         stats["snapshots"] += 1
@@ -184,6 +183,7 @@ def get_summary(run):
     snippets = analyze_snippets(run, capture_id)
     measured_seconds = samples / metadata["receiver"]["sample_rate_hz"] if samples is not None else None
     complete = (metadata.get("pipeline_returncode") == 0 and final.get("run_status") == "completed"
+                and wall is not None and wall >= metadata["window"]["requested_seconds"]
                 and measured_seconds is not None and measured_seconds >= metadata["window"]["requested_seconds"]
                 and len(snippets["snippets"]) == metadata["capture"]["snippet_limit"])
     temperatures = [s["cpu_temperature_c"] for s in snapshots if s.get("cpu_temperature_c") is not None]
@@ -194,6 +194,8 @@ def get_summary(run):
     rate = final.get("sample_rate_hz")
     distinct = largest.get("count") if sample_head is not None and rate and sample_head <= 900 * rate else None
     backend_ok = sum("aircraft" in item for item in snapshots)
+    diagnostics = [sample["diagnostics"] for sample in snapshots
+                   if sample.get("diagnostics", {}).get("capture_id") == capture_id]
     return {
         "schema_version": "1.0", "status": "completed" if complete else "incomplete",
         "provenance": metadata,
@@ -213,6 +215,10 @@ def get_summary(run):
             "cpu_temperature_c": {"min": min(temperatures, default=None), "max": max(temperatures, default=None)},
         },
         "final_metrics": final, "coverage": positions, "hourly_observed_traffic": hourly, "sampled_rf": snippets,
+        "backend_diagnostics": {
+            "matching_snapshots": len(diagnostics), "failed_polls": sum("diagnostics_error" in s for s in snapshots),
+            "latest": diagnostics[-1] if diagnostics else None,
+        },
     }
 
 
@@ -228,6 +234,7 @@ def markdown(report):
     sampled = report["sampled_rf"]
     metrics = report["final_metrics"]
     positions = report["coverage"]
+    diagnostics = report["backend_diagnostics"]
     distinct = summary["distinct_valid_icao"]
     distinct_text = human(distinct) if distinct is not None else "unavailable from the final 15-minute metric window"
     if summary["distinct_valid_icao_lower_bound"]:
@@ -265,6 +272,11 @@ def markdown(report):
         "| Offset (s) | IQ clip (%) | Peak/noise (dB) | Preambles | DF17 prefix | Tie rejects | Demodulated | Clean CRC | 1-bit fixable | Bad CRC |",
         "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
+    if meta["capture"].get("backend_diagnostics_requested"):
+        lines[lines.index("## Sampled CU8"):lines.index("## Sampled CU8")] = [
+            f"Backend diagnostics yielded {diagnostics['matching_snapshots']} capture-matched samples and "
+            f"{diagnostics['failed_polls']} failed polls.", "",
+        ]
     for snippet in sampled["snippets"]:
         health, funnel = snippet["iq_health"], snippet["funnel"]
         offset = snippet["start_sample_index"] / snippet["sample_rate_hz"]
